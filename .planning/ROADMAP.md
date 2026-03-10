@@ -36,7 +36,13 @@
   2. Smithay 0.7.0, Tokio 1.40+, and winit 0.30.x dependencies resolve correctly
   3. CI/CD pipeline runs tests on commit
   4. Both crates compile without errors
-**Plans:** TBD
+**Plans:** 4 plans
+
+**Plan List:**
+- [ ] 01-01-PLAN.md — Virtual workspace root configuration
+- [ ] 01-02-PLAN.md — Server crate setup with Smithay dependency
+- [ ] 01-03-PLAN.md — Viewer crate setup with winit dependency
+- [ ] 01-04-PLAN.md — CI/CD pipeline with GitHub Actions
 
 ### Phase 2: Wayland Core Protocol
 **Provenance:** [A] — Authoritative-driven
