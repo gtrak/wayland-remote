@@ -7,13 +7,13 @@
 
 use smithay::backend::renderer::{
     pixman::PixmanRenderer,
-    Offscreen, Bind, Renderer, ImportMemWl, Frame,
+    Offscreen, Bind, Renderer, ImportMemWl, Frame, Texture,
 };
-use smithay::utils::Size;
+use smithay::utils::{Size, Point, Transform, Rectangle};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::backend::renderer::allocator::Fourcc;
-use pixman::Image;
-use wayland_server::protocol::wl_buffer::WlBuffer;
+use smithay::backend::allocator::Fourcc;
+use smithay::reexports::pixman::Image;
+use smithay::utils::{Physical, Buffer as BufferCoord};
 
 /// Create an offscreen buffer for rendering
 ///
@@ -55,47 +55,51 @@ pub fn create_offscreen_buffer(
 pub fn render_surface_to_buffer(
     renderer: &mut PixmanRenderer,
     surface: &WlSurface,
-    buffer: &Image<'static, 'static>,
+    buffer: &mut Image<'static, 'static>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Get the current buffer attached to the surface
-    let wl_buffer = {
-        use smithay::wayland::compositor::{with_states, SurfaceAttributes, CachedState};
-        with_states(surface, |states| {
-            let attrs = states.cached_state.get::<SurfaceAttributes>();
-            attrs.current().buffer.as_ref().map(|(_, b)| b.clone())
-        })
+    // Import the shared memory buffer from the surface
+    // We need to do this inside with_states to get the surface_data reference
+    let texture = {
+        use smithay::wayland::compositor::{with_states, SurfaceAttributes, BufferAssignment};
+        let result: Result<_, _> = with_states(surface, |surface_data| {
+            let mut attrs = surface_data.cached_state.get::<SurfaceAttributes>();
+            // BufferAssignment is an enum: Removed or NewBuffer(WlBuffer)
+            let buffer = match &attrs.current().buffer {
+                Some(BufferAssignment::NewBuffer(buf)) => Some(buf.clone()),
+                Some(BufferAssignment::Removed) => None,
+                None => None,
+            };
+            match buffer {
+                Some(b) => Ok::<_, Box<dyn std::error::Error>>(renderer.import_shm_buffer(&b, Some(surface_data), &[])?),
+                None => Err("No buffer attached to surface".into()),
+            }
+        });
+        result?
     };
 
-    let Some(wl_buffer) = wl_buffer else {
-        return Err("No buffer attached to surface".into());
-    };
-
-    // Import the shared memory buffer
-    let texture = renderer.import_shm_buffer(&wl_buffer)?;
-
-    // Get texture dimensions
-    let texture_size = texture.size();
+    // Get buffer dimensions for the offscreen target
+    let buffer_size = Size::from((buffer.width() as i32, buffer.height() as i32));
 
     // Bind the offscreen target
     let mut target = renderer.bind(buffer)?;
 
-    // Clear the target
-    target.clear([0.0, 0.0, 0.0, 0.0])?;
-
+    // Render to the target (render requires framebuffer, output_size, dst_transform)
+    let mut frame = renderer.render(&mut target, buffer_size, Transform::Normal)?;
+    
     // Render the texture to the target
-    let frame = renderer.render(&mut target)?;
+    // render_texture_from_to: texture, src, dst, damage, opaque_regions, src_transform, alpha
     frame.render_texture_from_to(
         &texture,
-        smithay::utils::Point::default(),
-        smithay::utils::Point::default(),
-        None,
+        Rectangle::<f64, BufferCoord>::new(Point::<f64, BufferCoord>::default(), Size::<f64, BufferCoord>::from((texture.width() as f64, texture.height() as f64))),
+        Rectangle::<i32, Physical>::new(Point::<i32, Physical>::default(), buffer_size),
+        &[],
+        &[],
+        Transform::Normal,
         1.0,
-        smithay::utils::Transform::Normal,
-        false,
     )?;
 
     // Finish the frame
-    frame.finish()?;
+    let _ = frame.finish()?;
 
     Ok(())
 }
@@ -116,7 +120,7 @@ pub fn render_surface_to_buffer(
 pub fn try_render_surface_to_buffer(
     renderer: &mut PixmanRenderer,
     surface: &WlSurface,
-    buffer: &Image<'static, 'static>,
+    buffer: &mut Image<'static, 'static>,
 ) -> bool {
     render_surface_to_buffer(renderer, surface, buffer).is_ok()
 }
