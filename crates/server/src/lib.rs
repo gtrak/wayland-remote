@@ -6,8 +6,10 @@
 #![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
 
-use tracing::debug;
+/// Handler modules for Wayland protocol globals
+pub mod handlers;
 
+use tracing::debug;
 /// Server configuration and state
 #[derive(Debug)]
 pub struct ServerConfig {

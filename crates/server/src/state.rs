@@ -12,9 +12,14 @@ use smithay::reexports::{
 };
 use smithay::wayland::{
     compositor::{CompositorClientState, CompositorState, CompositorHandler, with_states},
-    socket::ListeningSocketSource,
+    socket::ListeningSocketSource
 };
+use smithay::input::{Seat, SeatHandler, SeatState};
+use smithay::output::Output;
 use smithay::delegate_compositor;
+use smithay::delegate_seat;
+use std::sync::atomic::{AtomicU32, Ordering};
+use wayland_remote_server::handlers::{seat, output};
 use std::sync::Arc;
 use tracing::info;
 
@@ -27,8 +32,16 @@ pub struct ServerState {
     pub display_handle: DisplayHandle,
     /// Compositor state for managing surfaces
     pub compositor_state: CompositorState,
+    /// Seat state for wl_seat global
+    pub seat_state: SeatState<Self>,
+    /// Seat with keyboard and pointer capabilities
+    pub seat: Seat<Self>,
+    /// Virtual output for wl_output global
+    pub output: Output,
     /// Name of the Wayland socket (e.g., "wayland-0")
     pub socket_name: std::ffi::OsString,
+    /// Serial counter for input events
+    serial_counter: AtomicU32,
 }
 
 impl ServerState {
@@ -51,6 +64,13 @@ impl ServerState {
         
         info!("Compositor state initialized, wl_compositor global advertised");
         
+        // Initialize seat state - this advertises wl_seat global with keyboard and pointer
+        let (seat_state, seat) = seat::create_seat(&dh, "wayland-remote-seat");
+        info!("Seat state initialized, wl_seat global advertised with keyboard and pointer");
+        
+        // Initialize output - this advertises wl_output global
+        let output = output::create_virtual_output(&dh);
+        info!("Output initialized, wl_output global advertised with 1920x1080 @ 60Hz mode");
         // Setup listening socket for client connections
         // ListeningSocketSource::new_auto() creates socket in XDG_RUNTIME_DIR
         // with auto-generated name like "wayland-0", "wayland-1", etc.
@@ -94,7 +114,11 @@ impl ServerState {
         Self {
             display_handle: dh,
             compositor_state,
+            seat_state,
+            seat,
+            output,
             socket_name,
+            serial_counter: AtomicU32::new(0),
         }
     }
     
@@ -120,6 +144,7 @@ impl ServerState {
 pub struct ClientState {
     /// Per-client compositor state
     pub compositor_state: CompositorClientState,
+
 }
 
 /// Implement ClientData trait for ClientState
@@ -170,3 +195,28 @@ impl CompositorHandler for ServerState {
 }
 
 delegate_compositor!(ServerState);
+
+
+
+
+/// Implement SeatHandler for ServerState
+///
+/// This trait provides access to seat state for protocol delegation.
+impl SeatHandler for ServerState {
+    /// Type for keyboard focus - using WlSurface which implements WaylandFocus
+    type KeyboardFocus = smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+    
+    /// Type for pointer focus
+    type PointerFocus = smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+    
+    /// Type for touch focus
+    type TouchFocus = smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+    
+    /// Get mutable reference to seat state
+    fn seat_state(&mut self) -> &mut SeatState<Self> {
+        &mut self.seat_state
+    }
+
+}
+
+delegate_seat!(ServerState);
