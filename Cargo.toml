@@ -23,7 +23,9 @@ anyhow = "1.0"
 thiserror = "1.0"
 
 # Server-specific
-smithay = "=0.7.0"
+# Note: smithay requires system libraries (libwayland, libxkbcommon, libseat)
+# For development without system deps, use minimal features
+smithay = { version = "=0.7.0", default-features = false, features = [] }
 
 # Viewer-specific (Windows)
 winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
