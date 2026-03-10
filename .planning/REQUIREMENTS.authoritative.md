@@ -77,6 +77,34 @@ Explicitly excluded from this project.
 | Web client | Doubles implementation effort; native Windows client is MVP focus |
 | Audio forwarding | Separate stream complexity; not core to remote display value |
 
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| WAYL-01 | Phase 2 | Pending |
+| WAYL-02 | Phase 2 | Pending |
+| WAYL-03 | Phase 2 | Pending |
+| REND-01 | Phase 3 | Pending |
+| REND-02 | Phase 3 | Pending |
+| REND-03 | Phase 3 | Pending |
+| STREAM-01 | Phase 4 | Pending |
+| STREAM-02 | Phase 4 | Pending |
+| STREAM-03 | Phase 4 | Pending |
+| STREAM-04 | Phase 4 | Pending |
+| VIEW-01 | Phase 5 | Pending |
+| VIEW-02 | Phase 5 | Pending |
+| VIEW-03 | Phase 6 | Pending |
+| VIEW-04 | Phase 6 | Pending |
+| INPUT-01 | Phase 8 | Pending |
+| INPUT-02 | Phase 8 | Pending |
+| INPUT-03 | Phase 8 | Pending |
+| INPUT-04 | Phase 8 | Pending |
+| WM-01 | Phase 7 | Pending |
+| WM-02 | Phase 7 | Pending |
+| WM-03 | Phase 7 | Pending |
+| WM-04 | Phase 7 | Pending |
+
+---
 ---
 
 *Authoritative requirements defined: 2025-03-10*
