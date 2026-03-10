@@ -34,6 +34,7 @@ use smithay::backend::renderer::Texture;
 use smithay::reexports::pixman::Image;
 // Import rendering functions
 use wayland_remote_server::rendering::offscreen;
+use wayland_remote_server::rendering::pixel_export::{self, RgbaData};
 
 use wayland_remote_server::handlers::{seat, output};
 
@@ -87,6 +88,8 @@ pub struct ServerState {
     pub renderer: PixmanRenderer,
     /// Per-surface offscreen buffer tracking for frame capture (REND-02)
     pub offscreen_buffers: HashMap<ObjectId, Image<'static, 'static>>,
+    /// Per-surface captured RGBA frames for streaming (REND-03)
+    pub captured_frames: HashMap<ObjectId, RgbaData>,
 }
 
 impl ServerState {
@@ -191,6 +194,7 @@ impl ServerState {
             serial_counter: AtomicU32::new(0),
             surfaces: HashMap::new(),
             offscreen_buffers: HashMap::new(),
+            captured_frames: HashMap::new(),
         }
     }
     
@@ -337,9 +341,17 @@ impl CompositorHandler for ServerState {
                     tracing::warn!("Failed to render surface {:?} to offscreen buffer", surface_id);
                 } else {
                     info!("Surface {:?}: Rendered to offscreen buffer ({})", surface_id, width * height);
+                    
+                    // Extract RGBA pixel data from the rendered buffer (REND-03)
+                    // Buffer is held until extraction completes per Pattern 4
+                    if let Some(rgba_data) = pixel_export::extract_rgba_pixels(&mut self.renderer, surface, buffer) {
+                        self.captured_frames.insert(surface_id.clone(), rgba_data.clone());
+                        info!("Surface {:?}: Extracted RGBA pixels ({} bytes)", surface_id, rgba_data.byte_size());
+                    }
                 }
             }
         }
+        
         // Log with buffer attachment status
         if buffer_attached {
             let buffer_count = self.surfaces.get(&surface_id).map(|s| s.buffer_count).unwrap_or(0);
