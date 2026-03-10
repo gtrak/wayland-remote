@@ -42,8 +42,8 @@ Users can run Linux GUI applications remotely and interact with them as native w
 - **Phase Completion:** 0/8 phases
 
 ```
-[▓▓░░░░░░░░░░░░░░░░] 25% Overall Progress
-Phase: 1 (2/4 plans complete)
+[▓▓▓▓░░░░░░░░░░░░░░] 50% Overall Progress
+Phase: 2 (1/3 plans complete)
 ```
 
 ### Current Plan
@@ -52,6 +52,7 @@ Phase: 1 (2/4 plans complete)
 - **Blocking:** None
 
 ### Recent Activity
+ - [2026-03-10] Phase 2 Plan 01 completed (Wayland core compositor with calloop)
 - [2025-03-10] Project initialized
 - [2025-03-10] Research completed (6 critical pitfalls identified)
 - [2025-03-10] Roadmap created (8 phases, 22 requirements mapped)
@@ -72,6 +73,7 @@ Phase: 1 (2/4 plans complete)
 ---
 | Phase 01-project-foundation P01-03 | 1 min | 3 tasks | 2 files |
 | Phase 01-project-foundation P01-04 | 1 min | 4 tasks | 2 files |
+ | Phase 02-wayland-core-protocol P02-01 | 11 min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
