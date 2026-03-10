@@ -20,9 +20,14 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
-# Smithay with minimal features for now (no system deps required)
-# Full features will be enabled when system libraries are available
-smithay = { workspace = true, default-features = false, features = [] }
+# Smithay with wayland_frontend feature for core protocol support
+# Following Smallvil pattern from research
+smithay = { workspace = true, default-features = false, features = ["wayland_frontend"] }
+
+# Event loop and Wayland server infrastructure
+calloop = "0.14.0"
+wayland-server = "0.31.9"
+wayland-protocols = "0.32.8"
 
 [dev-dependencies]
 # Testing utilities will be added in later phases
