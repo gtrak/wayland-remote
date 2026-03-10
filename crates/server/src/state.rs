@@ -303,12 +303,34 @@ impl CompositorHandler for ServerState {
                 let width = size.w;
                 let height = size.h;
                 
+                // Check if buffer exists and dimensions match (M-1: buffer resize handling)
+                let needs_new_buffer = self.offscreen_buffers.get(&surface_id)
+                    .map(|buf| buf.width() as i32 != width || buf.height() as i32 != height)
+                    .unwrap_or(true);
+                
+                if needs_new_buffer {
+                    // Remove old buffer if it exists
+                    self.offscreen_buffers.remove(&surface_id);
+                }
+                
                 // Get or create offscreen buffer for this surface
-                let buffer = self.offscreen_buffers.entry(surface_id.clone()).or_insert_with(|| {
-                    // Create new buffer with surface dimensions
-                    offscreen::create_offscreen_buffer(&mut self.renderer, width, height)
-                        .expect("Failed to create offscreen buffer")
-                });
+                let buffer = match self.offscreen_buffers.get_mut(&surface_id) {
+                    Some(buf) => buf,
+                    None => {
+                        // Create new buffer with surface dimensions (M-2: proper error handling)
+                        match offscreen::create_offscreen_buffer(&mut self.renderer, width, height) {
+                            Ok(buffer) => {
+                                let _existing = self.offscreen_buffers.insert(surface_id.clone(), buffer);
+                                // Safety: We just inserted, so this unwrap is safe
+                                self.offscreen_buffers.get_mut(&surface_id).unwrap()
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to create offscreen buffer for surface {:?}: {}", surface_id, e);
+                                return; // M-2: graceful error handling - return early
+                            }
+                        }
+                    }
+                };
                 
                 // Render surface to buffer
                 if !offscreen::try_render_surface_to_buffer(&mut self.renderer, surface, buffer) {

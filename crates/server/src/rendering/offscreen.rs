@@ -33,7 +33,7 @@ pub fn create_offscreen_buffer(
     height: i32,
 ) -> Result<Image<'static, 'static>, smithay::backend::renderer::pixman::PixmanError> {
     let size = Size::from((width, height));
-    // Create headless memory buffer in RGBA format
+    // Create headless memory buffer in ARGB8888 in little-endian (ABGR) format
     renderer.create_buffer(Fourcc::Abgr8888, size)
 }
 
