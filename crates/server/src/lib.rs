@@ -9,6 +9,9 @@
 /// Handler modules for Wayland protocol globals
 pub mod handlers;
 
+/// Rendering module for headless/offscreen rendering
+pub mod rendering;
+
 use tracing::debug;
 /// Server configuration and state
 #[derive(Debug)]
