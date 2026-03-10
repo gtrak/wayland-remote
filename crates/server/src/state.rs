@@ -10,7 +10,7 @@ use smithay::reexports::{
     },
 };
 use smithay::wayland::{
-    compositor::{CompositorClientState, CompositorState, CompositorHandler, SurfaceAttributes, with_states},
+    compositor::{CompositorClientState, CompositorState, CompositorHandler, SurfaceAttributes, with_states, BufferAssignment},
     socket::ListeningSocketSource,
     shm::{ShmState, ShmHandler},
     buffer::BufferHandler,
@@ -29,7 +29,11 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
 use smithay::backend::renderer::pixman::PixmanRenderer;
+use smithay::backend::renderer::ImportMemWl;
+use smithay::backend::renderer::Texture;
 use smithay::reexports::pixman::Image;
+// Import rendering functions
+use wayland_remote_server::rendering::offscreen;
 
 use wayland_remote_server::handlers::{seat, output};
 
@@ -279,6 +283,41 @@ impl CompositorHandler for ServerState {
                 last_commit: Some(Instant::now()),
             });
         
+        // Render surface to offscreen buffer when buffer is attached (REND-02)
+        if buffer_attached {
+            // Get surface dimensions from buffer by importing it
+            let result = with_states(surface, |states| {
+                let mut attrs = states.cached_state.get::<SurfaceAttributes>();
+                if let Some(BufferAssignment::NewBuffer(buf)) = &attrs.current().buffer {
+                    // Import the buffer to get its size
+                    match self.renderer.import_shm_buffer(buf, Some(states), &[]) {
+                        Ok(texture) => Some(texture.size()),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                }
+            });
+            
+            if let Some(size) = result {
+                let width = size.w;
+                let height = size.h;
+                
+                // Get or create offscreen buffer for this surface
+                let buffer = self.offscreen_buffers.entry(surface_id.clone()).or_insert_with(|| {
+                    // Create new buffer with surface dimensions
+                    offscreen::create_offscreen_buffer(&mut self.renderer, width, height)
+                        .expect("Failed to create offscreen buffer")
+                });
+                
+                // Render surface to buffer
+                if !offscreen::try_render_surface_to_buffer(&mut self.renderer, surface, buffer) {
+                    tracing::warn!("Failed to render surface {:?} to offscreen buffer", surface_id);
+                } else {
+                    info!("Surface {:?}: Rendered to offscreen buffer ({})", surface_id, width * height);
+                }
+            }
+        }
         // Log with buffer attachment status
         if buffer_attached {
             let buffer_count = self.surfaces.get(&surface_id).map(|s| s.buffer_count).unwrap_or(0);
