@@ -10,8 +10,8 @@ These are derived from authoritative requirements during planning. They represen
 ### Core Wayland Protocol
 
 - [x] **DER-WAYL-01** (from WAYL-01): Implement wl_compositor interface with surface creation
-- [ ] **DER-WAYL-02** (from WAYL-01): Implement wl_seat with keyboard and pointer capabilities
-- [ ] **DER-WAYL-03** (from WAYL-01): Implement wl_output with virtual display configuration
+- [x] **DER-WAYL-02** (from WAYL-01): Implement wl_seat with keyboard and pointer capabilities
+- [x] **DER-WAYL-03** (from WAYL-01): Implement wl_output with virtual display configuration
 - [ ] **DER-WAYL-04** (from WAYL-02): Handle wl_surface.attach with SHM buffers
 - [ ] **DER-WAYL-05** (from WAYL-02): Handle wl_surface.commit to trigger rendering
 - [ ] **DER-WAYL-06** (from WAYL-03): Proper surface destruction and resource cleanup

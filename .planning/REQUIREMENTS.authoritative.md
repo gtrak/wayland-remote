@@ -10,8 +10,8 @@ These are the human-defined requirements. Each maps to roadmap phases.
 ### Core Wayland Protocol
 
 - [x] **WAYL-01**: Compositor accepts Wayland client connections and handles wl_compositor, wl_surface, wl_seat, wl_output protocols
-- [ ] **WAYL-02**: Applications can create surfaces, attach buffers, and commit changes
-- [ ] **WAYL-03**: Surface destruction and cleanup is handled properly
+- [x] **WAYL-02**: Applications can create surfaces, attach buffers, and commit changes
+- [x] **WAYL-03**: Surface destruction and cleanup is handled properly
 
 ### Rendering Pipeline
 
@@ -82,8 +82,8 @@ Explicitly excluded from this project.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | WAYL-01 | Phase 2 | Complete |
-| WAYL-02 | Phase 2 | Pending |
-| WAYL-03 | Phase 2 | Pending |
+| WAYL-02 | Phase 2 | Complete |
+| WAYL-03 | Phase 2 | Complete |
 | REND-01 | Phase 3 | Pending |
 | REND-02 | Phase 3 | Pending |
 | REND-03 | Phase 3 | Pending |
