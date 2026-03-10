@@ -1,4 +1,3 @@
-//! Server state for Wayland compositor
 //! 
 //! Implements the Smallvil pattern: minimal compositor with CompositorState,
 //! integrated with calloop event loop for event dispatch.
@@ -11,8 +10,10 @@ use smithay::reexports::{
     },
 };
 use smithay::wayland::{
-    compositor::{CompositorClientState, CompositorState, CompositorHandler},
+    compositor::{CompositorClientState, CompositorState, CompositorHandler, SurfaceAttributes, with_states},
     socket::ListeningSocketSource,
+    shm::{ShmState, ShmHandler},
+    buffer::BufferHandler,
 };
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::Output;
@@ -20,6 +21,7 @@ use smithay::wayland::output::{OutputManagerState, OutputHandler};
 use smithay::delegate_compositor;
 use smithay::delegate_seat;
 use smithay::delegate_output;
+use smithay::delegate_shm;
 use wayland_server::backend::ObjectId;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
@@ -67,6 +69,8 @@ pub struct ServerState {
     pub output_manager_state: OutputManagerState,
     /// Virtual output for wl_output global
     pub output: Output,
+    /// Shared memory state for wl_shm global
+    pub shm_state: ShmState,
     /// Name of the Wayland socket (e.g., "wayland-0")
     pub socket_name: std::ffi::OsString,
     /// Serial counter for input events
@@ -94,6 +98,10 @@ impl ServerState {
         let compositor_state = CompositorState::new::<Self>(&dh);
         
         info!("Compositor state initialized, wl_compositor global advertised");
+        
+        // Initialize ShmState for shared memory buffers (M-2)
+        let shm_state = ShmState::new::<Self>(&dh, vec![]);
+        info!("ShmState initialized, wl_shm global advertised");
         
         // Initialize seat state - this advertises wl_seat global with keyboard and pointer
         let (seat_state, seat) = seat::create_seat(&dh, "wayland-remote-seat");
@@ -163,6 +171,7 @@ impl ServerState {
             seat,
             output_manager_state,
             output,
+            shm_state,
             socket_name,
             serial_counter: AtomicU32::new(0),
             surfaces: HashMap::new(),
@@ -229,29 +238,46 @@ impl CompositorHandler for ServerState {
     /// Called when a surface commits new state
     /// 
     /// This is the core of surface lifecycle tracking:
-    /// - Detect buffer attachments via SurfaceAttributes
+    /// - Detect buffer attachments via SurfaceAttributes (M-3)
     /// - Track surface commits
     /// - Log surface activity for debugging
     fn commit(&mut self, surface: &WlSurface) {
         // Get surface ID for tracking
         let surface_id = surface.id();
         
-        // Track surface in ServerState
-        self.surfaces.insert(
-            surface_id.clone(),
-            SurfaceInfo {
-                creation_time: Instant::now(),
-                buffer_count: self.surfaces.get(&surface_id).map(|s| s.buffer_count + 1).unwrap_or(1),
-                last_commit: Some(Instant::now()),
-            }
-        );
+        // Use with_states to access SurfaceAttributes and detect buffer attachments (M-3)
+        let buffer_attached = with_states(surface, |states| {
+            let mut attrs = states.cached_state.get::<SurfaceAttributes>();
+            attrs.current().buffer.is_some()
+        });
         
-        info!("Surface {:?}: Commit received", surface_id);
+        // Track surface in ServerState
+        self.surfaces
+            .entry(surface_id.clone())
+            .and_modify(|info| {
+                // Update existing surface info
+                info.last_commit = Some(Instant::now());
+                if buffer_attached {
+                    info.buffer_count += 1;
+                }
+            })
+            .or_insert_with(|| SurfaceInfo {
+                creation_time: Instant::now(),
+                buffer_count: if buffer_attached { 1 } else { 0 },
+                last_commit: Some(Instant::now()),
+            });
+        
+        // Log with buffer attachment status
+        if buffer_attached {
+            let buffer_count = self.surfaces.get(&surface_id).map(|s| s.buffer_count).unwrap_or(0);
+            info!("Surface {:?}: Commit received with buffer attachment (total buffers: {})", surface_id, buffer_count);
+        } else {
+            info!("Surface {:?}: Commit received (no buffer)", surface_id);
+        }
     }
 }
 
 delegate_compositor!(ServerState);
-
 
 /// Implement SeatHandler for ServerState
 ///
@@ -270,11 +296,9 @@ impl SeatHandler for ServerState {
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
     }
-
 }
 
 delegate_seat!(ServerState);
-
 
 /// Implement OutputHandler for ServerState
 ///
@@ -284,3 +308,22 @@ impl OutputHandler for ServerState {
 }
 
 delegate_output!(ServerState);
+
+/// Implement ShmHandler for ServerState
+///
+/// This trait handles wl_shm binding events.
+impl ShmHandler for ServerState {
+    fn shm_state(&self) -> &ShmState {
+        &self.shm_state
+    }
+}
+
+/// Implement BufferHandler for ServerState (required for ShmState)
+impl BufferHandler for ServerState {
+    fn buffer_destroyed(&mut self, _buffer: &wayland_server::protocol::wl_buffer::WlBuffer) {
+        // Buffer destroyed - no custom cleanup needed
+        // The surfaces HashMap is cleaned up when clients disconnect
+    }
+}
+
+delegate_shm!(ServerState);
