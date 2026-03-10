@@ -1,6 +1,38 @@
-[package]
-name = "wayland-remote"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["crates/server", "crates/viewer"]
+resolver = "3"
 
-[dependencies]
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Wayland Remote Contributors"]
+license = "MIT OR Apache-2.0"
+rust-version = "1.70"
+repository = "https://github.com/wayland-remote/wayland-remote"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# Logging
+tracing = { version = "0.1", features = ["max_level_trace", "release_max_level_debug"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Server-specific
+smithay = "=0.7.0"
+
+# Viewer-specific (Windows)
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
+raw-window-handle = "0.6"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
