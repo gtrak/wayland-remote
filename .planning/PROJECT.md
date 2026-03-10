@@ -54,6 +54,7 @@ Users can run Linux GUI applications remotely and interact with them as native w
 | Smithay over raw wlroots | Rust-native, good abstraction | — Pending |
 | GDI over Direct3D/wgpu | Easiest path for MVP | — Pending |
 | Raw RGBA over H264 | Focus on getting it working first | — Pending |
+| TDD red-green-refactor | Ensures correctness, guides incremental development | — Pending |
 
 ---
 *Last updated: 2025-03-10 after initialization*
