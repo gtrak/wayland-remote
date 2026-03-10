@@ -5,12 +5,12 @@
 
 use smithay::backend::renderer::{
     pixman::PixmanRenderer,
-    ExportMem, ImportMemWl, Texture,
+    ExportMem, Bind, Texture,
 };
 use smithay::backend::allocator::Fourcc;
-use smithay::utils::{Rectangle, Transform};
+use smithay::utils::{Rectangle, Point, Size, Buffer as BufferCoord};
+use smithay::reexports::pixman::Image;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::wayland::compositor::{with_states, SurfaceAttributes, BufferAssignment};
 
 /// RGBA pixel data extracted from a framebuffer
 ///
@@ -43,50 +43,38 @@ impl RgbaData {
     }
 }
 
-/// Extract RGBA pixel data from a rendered Wayland surface
+/// Extract RGBA pixel data from an offscreen pixman buffer
 ///
 /// This function:
-/// 1. Imports the surface's shared memory buffer to get the texture
-/// 2. Uses ExportMem::copy_framebuffer() to copy the texture to a PixmanMapping
+/// 1. Binds the offscreen buffer as a target
+/// 2. Uses ExportMem::copy_framebuffer() to copy to a PixmanMapping
 /// 3. Calls map_texture() to get a &[u8] slice of the pixel data
 /// 4. Clones the bytes into an owned Vec<u8> for transmission
 ///
 /// # Arguments
 /// * `renderer` - The PixmanRenderer to use for pixel extraction
-/// * `surface` - The Wayland surface to extract pixels from
+/// * `buffer` - The offscreen pixman buffer containing rendered content
 ///
 /// # Returns
 /// Some(RgbaData) containing the pixel data and dimensions, or None if extraction fails
-pub fn extract_rgba_pixels(
+pub fn extract_rgba_from_buffer(
     renderer: &mut PixmanRenderer,
-    surface: &WlSurface,
+    buffer: &mut Image<'static, 'static>,
 ) -> Option<RgbaData> {
-    // Import the surface's shared memory buffer to get the texture
-    let texture: Texture = {
-        let result: Result<_, _> = with_states(surface, |surface_data| {
-            let mut attrs = surface_data.cached_state.get::<SurfaceAttributes>();
-            let buffer = match &attrs.current().buffer {
-                Some(BufferAssignment::NewBuffer(buf)) => Some(buf.clone()),
-                Some(BufferAssignment::Removed) => None,
-                None => None,
-            };
-            match buffer {
-                Some(b) => Ok(renderer.import_shm_buffer(&b, Some(surface_data), &[])?),
-                None => Err("No buffer attached to surface".into()),
-            }
-        });
-        
-        result.ok()?
-    };
+    let width = buffer.width() as u32;
+    let height = buffer.height() as u32;
     
-    // Get dimensions from the texture
-    let size = texture.size();
-    let width = size.w as u32;
-    let height = size.h as u32;
+    // Bind the offscreen buffer as a target
+    let target = renderer.bind(buffer).ok()?;
     
-    // Use ExportMem::copy_framebuffer to copy the texture to a PixmanMapping
-    // This converts the texture to ABGR8888 format for easy pixel access
-    let mapping = renderer.copy_framebuffer(&texture, Fourcc::Abgr8888, None).ok()?;
+    // Use ExportMem::copy_framebuffer to copy the target to a PixmanMapping
+    // This converts the buffer to ABGR8888 format for easy pixel access
+    let target_size = Size::from((width as i32, height as i32));
+    let target_rect = Rectangle::<i32, BufferCoord>::new(
+        Point::<i32, BufferCoord>::default(), 
+        target_size
+    );
+    let mapping = renderer.copy_framebuffer(&target, target_rect, Fourcc::Abgr8888).ok()?;
     
     // Map the texture to get a &[u8] slice of the pixel data
     // The mapping must be held until we clone the data
@@ -109,4 +97,25 @@ pub fn extract_rgba_pixels(
     }
     
     Some(RgbaData::new(width, height, data))
+}
+
+/// Extract RGBA pixel data from a rendered Wayland surface via its offscreen buffer
+///
+/// This function:
+/// 1. Gets the offscreen buffer for the surface from ServerState
+/// 2. Calls extract_rgba_from_buffer() to extract the pixels
+///
+/// # Arguments
+/// * `renderer` - The PixmanRenderer to use for pixel extraction
+/// * `surface` - The Wayland surface to extract pixels from
+/// * `offscreen_buffer` - The offscreen buffer for this surface
+///
+/// # Returns
+/// Some(RgbaData) containing the pixel data and dimensions, or None if extraction fails
+pub fn extract_rgba_pixels(
+    renderer: &mut PixmanRenderer,
+    _surface: &WlSurface,
+    offscreen_buffer: &mut Image<'static, 'static>,
+) -> Option<RgbaData> {
+    extract_rgba_from_buffer(renderer, offscreen_buffer)
 }
