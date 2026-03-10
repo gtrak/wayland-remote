@@ -1,0 +1,10 @@
+{
+  "permission": {
+    "read": {
+      "/home/gary/dev/wayland-remote/.opencode/get-shit-done/*": "allow"
+    },
+    "external_directory": {
+      "/home/gary/dev/wayland-remote/.opencode/get-shit-done/*": "allow"
+    }
+  }
+}
