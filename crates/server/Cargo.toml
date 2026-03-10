@@ -30,4 +30,7 @@ wayland-server = "0.31.9"
 wayland-protocols = "0.32.8"
 
 [dev-dependencies]
-# Testing utilities will be added in later phases
+# Testing utilities for integration tests
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+tempfile = "3"
