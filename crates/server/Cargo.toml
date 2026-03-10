@@ -6,15 +6,23 @@ authors.workspace = true
 license.workspace = true
 description = "Headless Wayland compositor server with frame streaming"
 rust-version.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "wayland-remote-server"
 path = "src/main.rs"
 
 [dependencies]
+# Workspace dependencies
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-smithay = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+
+# Smithay with minimal features for now (no system deps required)
+# Full features will be enabled when system libraries are available
+smithay = { workspace = true, default-features = false, features = [] }
+
+[dev-dependencies]
+# Testing utilities will be added in later phases
