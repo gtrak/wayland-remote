@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
 use smithay::backend::renderer::pixman::PixmanRenderer;
+use smithay::reexports::pixman::Image;
 
 use wayland_remote_server::handlers::{seat, output};
 
@@ -80,6 +81,8 @@ pub struct ServerState {
     pub surfaces: HashMap<ObjectId, SurfaceInfo>,
     /// PixmanRenderer for headless software rendering
     pub renderer: PixmanRenderer,
+    /// Per-surface offscreen buffer tracking for frame capture (REND-02)
+    pub offscreen_buffers: HashMap<ObjectId, Image<'static, 'static>>,
 }
 
 impl ServerState {
@@ -183,6 +186,7 @@ impl ServerState {
             socket_name,
             serial_counter: AtomicU32::new(0),
             surfaces: HashMap::new(),
+            offscreen_buffers: HashMap::new(),
         }
     }
     
