@@ -22,7 +22,7 @@ thiserror = { workspace = true }
 
 # Smithay with wayland_frontend feature for core protocol support
 # Following Smallvil pattern from research
-smithay = { workspace = true, default-features = false, features = ["wayland_frontend"] }
+smithay = { workspace = true, default-features = false, features = ["wayland_frontend", "renderer_pixman"] }
 
 # Event loop and Wayland server infrastructure
 calloop = "0.14.0"
