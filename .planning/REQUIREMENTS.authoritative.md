@@ -16,7 +16,7 @@ These are the human-defined requirements. Each maps to roadmap phases.
 ### Rendering Pipeline
 
 - [x] **REND-01**: Compositor uses headless/offscreen rendering (PixmanRenderer)
-- [ ] **REND-02**: Surface content is rendered to an offscreen buffer/framebuffer
+- [x] **REND-02**: Surface content is rendered to an offscreen buffer/framebuffer
 - [ ] **REND-03**: Framebuffer can be read back as RGBA pixel data
 
 ### Frame Streaming
@@ -85,7 +85,7 @@ Explicitly excluded from this project.
 | WAYL-02 | Phase 2 | Complete |
 | WAYL-03 | Phase 2 | Complete |
 | REND-01 | Phase 3 | Complete |
-| REND-02 | Phase 3 | Pending |
+| REND-02 | Phase 3 | Complete |
 | REND-03 | Phase 3 | Pending |
 | STREAM-01 | Phase 4 | Pending |
 | STREAM-02 | Phase 4 | Pending |
