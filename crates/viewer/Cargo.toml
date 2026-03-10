@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 description = "Windows viewer for Wayland remote desktop"
 rust-version.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "wayland-remote-viewer"
