@@ -16,8 +16,10 @@ use smithay::wayland::{
 };
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::Output;
+use smithay::wayland::output::{OutputManagerState, OutputHandler};
 use smithay::delegate_compositor;
 use smithay::delegate_seat;
+use smithay::delegate_output;
 use std::sync::atomic::{AtomicU32, Ordering};
 use wayland_remote_server::handlers::{seat, output};
 use std::sync::Arc;
@@ -36,6 +38,8 @@ pub struct ServerState {
     pub seat_state: SeatState<Self>,
     /// Seat with keyboard and pointer capabilities
     pub seat: Seat<Self>,
+    /// Output manager state for wl_output global
+    pub output_manager_state: OutputManagerState,
     /// Virtual output for wl_output global
     pub output: Output,
     /// Name of the Wayland socket (e.g., "wayland-0")
@@ -68,8 +72,21 @@ impl ServerState {
         let (seat_state, seat) = seat::create_seat(&dh, "wayland-remote-seat");
         info!("Seat state initialized, wl_seat global advertised with keyboard and pointer");
         
-        // Initialize output - this advertises wl_output global
-        let output = output::create_virtual_output(&dh);
+        // Initialize output manager state - this advertises wl_output global
+        let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
+        
+        // Create virtual output
+        let output = output::create_virtual_output::<ServerState>(&dh);
+        
+        // Configure the output with mode
+        output.change_current_state(
+            Some(smithay::output::Mode { size: smithay::utils::Size::new(1920, 1080), refresh: 60000 }),
+            Some(smithay::utils::Transform::Normal),
+            Some(smithay::output::Scale::Integer(1)),
+            Some(smithay::utils::Point::new(0, 0)),
+        );
+        output.set_preferred(smithay::output::Mode { size: smithay::utils::Size::new(1920, 1080), refresh: 60000 });
+        
         info!("Output initialized, wl_output global advertised with 1920x1080 @ 60Hz mode");
         // Setup listening socket for client connections
         // ListeningSocketSource::new_auto() creates socket in XDG_RUNTIME_DIR
@@ -116,6 +133,7 @@ impl ServerState {
             compositor_state,
             seat_state,
             seat,
+            output_manager_state,
             output,
             socket_name,
             serial_counter: AtomicU32::new(0),
@@ -144,7 +162,6 @@ impl ServerState {
 pub struct ClientState {
     /// Per-client compositor state
     pub compositor_state: CompositorClientState,
-
 }
 
 /// Implement ClientData trait for ClientState
@@ -220,3 +237,13 @@ impl SeatHandler for ServerState {
 }
 
 delegate_seat!(ServerState);
+
+
+/// Implement OutputHandler for ServerState
+///
+/// This trait handles wl_output binding events.
+impl OutputHandler for ServerState {
+    // Default implementation does nothing, which is fine for our use case
+}
+
+delegate_output!(ServerState);

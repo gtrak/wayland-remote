@@ -3,9 +3,11 @@
 //! Provides wl_output global with virtual display configuration.
 //! Clients need wl_output to know display parameters for rendering.
 
-use smithay::reexports::wayland_server::DisplayHandle;
+use smithay::reexports::wayland_server::{DisplayHandle, GlobalDispatch, protocol::wl_output::WlOutput};
 use smithay::output::{Mode, Output};
 use smithay::utils::Size;
+use smithay::wayland::output::{OutputHandler, WlOutputData};
+use smithay::wayland::compositor::CompositorHandler;
 
 /// Create a virtual output for the compositor
 ///
@@ -17,7 +19,13 @@ use smithay::utils::Size;
 ///
 /// # Returns
 /// Configured Output with 1920x1080 @ 60Hz mode
-pub fn create_virtual_output(dh: &DisplayHandle) -> Output {
+pub fn create_virtual_output<S>(dh: &DisplayHandle) -> Output
+where
+    S: OutputHandler
+        + CompositorHandler
+        + GlobalDispatch<WlOutput, WlOutputData>
+        + 'static,
+{
     // Create output with physical properties
     // Size (0, 0) indicates headless/virtual display
     let output = Output::new(
@@ -29,12 +37,8 @@ pub fn create_virtual_output(dh: &DisplayHandle) -> Output {
             model: "Virtual".to_string(),
         },
     );
-    
     // Advertise the output global to clients
-    // Note: We use a simpler approach without GlobalDispatch requirement
-    // The output is created and configured, but global dispatching
-    // is handled by the compositor's event loop
-    
+    output.create_global::<S>(dh);
     // Configure mode: 1920x1080 @ 60Hz
     // Vrefresh is in mHz (60 Hz = 60000 mHz)
     output.add_mode(Mode {
