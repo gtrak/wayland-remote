@@ -4,6 +4,8 @@
 **Current Phase:** Phase 1 — Project Foundation
 **Last Updated:** 2026-03-10
 **Mode:** yolo (comprehensive depth)  
+**Current Plan:** 3
+**Total Plans in Phase:** 4
 
 ---
 
@@ -27,7 +29,8 @@ Users can run Linux GUI applications remotely and interact with them as native w
 | GDI over Direct3D | Easiest path for MVP | Pending validation |
 | Raw RGBA over H264 | Focus on correctness first | Pending validation |
 | TDD red-green-refactor | Ensures incremental progress | Pending validation |
-| Rust 1.75 with resolver = "2" | Compatibility with Smithay 0.7.0 | Validated
+| Rust 1.75 with resolver = "2" | Compatibility with Smithay 0.7.0 | Validated |
+| Rust 1.85 for edition2024 support | Required by transitive dependencies | Validated |
 
 ---
 
@@ -39,14 +42,13 @@ Users can run Linux GUI applications remotely and interact with them as native w
 - **Phase Completion:** 0/8 phases
 
 ```
-```
-[▓░░░░░░░░░░░░░░░░░] 12% Overall Progress
-Phase: 1 (1/4 plans complete)
+[▓▓░░░░░░░░░░░░░░░░] 25% Overall Progress
+Phase: 1 (2/4 plans complete)
 ```
 
 ### Current Plan
-- **Plan:** 01-02 (Server crate setup with Smithay)
-- **Status:** In Progress
+- **Plan:** 01-03 (Viewer crate setup with winit)
+- **Status:** Ready to execute
 - **Blocking:** None
 
 ### Recent Activity
@@ -54,6 +56,7 @@ Phase: 1 (1/4 plans complete)
 - [2025-03-10] Research completed (6 critical pitfalls identified)
 - [2025-03-10] Roadmap created (8 phases, 22 requirements mapped)
 - [2026-03-10] Phase 1 Plan 01 completed (virtual workspace root)
+- [2026-03-10] Phase 1 Plan 02 completed (server crate setup)
 
 ---
 
@@ -85,6 +88,8 @@ These must be addressed in their respective phases:
 - **Tokio for async**: TCP streaming server
 - **winit 0.30.x**: Windows window management
 - **Security via SSH**: No built-in authentication (by design)
+- **Rust 1.85**: Updated from 1.75 for edition2024 support
+- **Minimal smithay features**: Avoids system library requirements in dev
 
 ### Open Questions
 1. How will raw RGBA bandwidth (~90MB/s for 1080p) perform on real LAN?
@@ -112,16 +117,16 @@ These must be addressed in their respective phases:
 - Initialize CI/CD pipeline
 
 ### Next Actions
-1. `/gsd-plan-phase 1` — Create detailed plan for Phase 1
-2. Review plan with user
-3. Execute Phase 1 implementation
+1. Execute plan 01-03 (Viewer crate setup with winit)
+2. Execute plan 01-04 (CI/CD pipeline with GitHub Actions)
+3. Verify Phase 1 completion
 
 ### State of the World
 - Project definition: ✓ Complete
 - Research: ✓ Complete (6 pitfalls documented)
 - Requirements: ✓ Complete (22 v1 requirements)
 - Roadmap: ✓ Complete (8 phases defined)
-- Planning: ⏳ Ready to begin Phase 1 planning
+- Phase 1: ⏳ In Progress (2/4 plans complete)
 
 ---
 
@@ -132,4 +137,4 @@ None currently.
 ---
 
 *State initialized: 2025-03-10*
-*Next: Phase 1 planning*
+*Last Activity: 2026-03-10*
