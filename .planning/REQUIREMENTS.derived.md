@@ -18,7 +18,7 @@ These are derived from authoritative requirements during planning. They represen
 
 ### Rendering Pipeline
 
-- [ ] **DER-REND-01** (from REND-01): Configure Smithay with Virtual backend
+- [x] **DER-REND-01** (from REND-01): Configure Smithay with Virtual backend
 - [ ] **DER-REND-02** (from REND-01): Initialize PixmanRenderer for CPU rendering
 - [ ] **DER-REND-03** (from REND-02): Implement headless output (no physical display)
 - [ ] **DER-REND-04** (from REND-03): Read pixels from Pixman buffer to RGBA bytes
