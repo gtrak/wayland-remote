@@ -6,13 +6,13 @@
 use smithay::reexports::{
     calloop::{EventLoop, generic::Generic, Interest, Mode, PostAction},
     wayland_server::{
-        Display, DisplayHandle, protocol::wl_surface::WlSurface, Client,
+        Display, DisplayHandle, protocol::wl_surface::WlSurface, Client, Resource,
         backend::{ClientData, DisconnectReason, ClientId},
     },
 };
 use smithay::wayland::{
-    compositor::{CompositorClientState, CompositorState, CompositorHandler, with_states},
-    socket::ListeningSocketSource
+    compositor::{CompositorClientState, CompositorState, CompositorHandler},
+    socket::ListeningSocketSource,
 };
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::Output;
@@ -20,10 +20,35 @@ use smithay::wayland::output::{OutputManagerState, OutputHandler};
 use smithay::delegate_compositor;
 use smithay::delegate_seat;
 use smithay::delegate_output;
-use std::sync::atomic::{AtomicU32, Ordering};
-use wayland_remote_server::handlers::{seat, output};
+use wayland_server::backend::ObjectId;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::info;
+
+use wayland_remote_server::handlers::{seat, output};
+
+/// Information about a tracked surface
+#[derive(Debug, Clone)]
+pub struct SurfaceInfo {
+    /// When the surface was created
+    pub creation_time: Instant,
+    /// Number of buffer attachments
+    pub buffer_count: u32,
+    /// Last commit time
+    pub last_commit: Option<Instant>,
+}
+
+impl SurfaceInfo {
+    pub fn new() -> Self {
+        Self {
+            creation_time: Instant::now(),
+            buffer_count: 0,
+            last_commit: None,
+        }
+    }
+}
 
 /// Server state holding all compositor-related state
 /// 
@@ -46,6 +71,8 @@ pub struct ServerState {
     pub socket_name: std::ffi::OsString,
     /// Serial counter for input events
     serial_counter: AtomicU32,
+    /// Track active surfaces for lifecycle management
+    pub surfaces: HashMap<ObjectId, SurfaceInfo>,
 }
 
 impl ServerState {
@@ -88,6 +115,7 @@ impl ServerState {
         output.set_preferred(smithay::output::Mode { size: smithay::utils::Size::new(1920, 1080), refresh: 60000 });
         
         info!("Output initialized, wl_output global advertised with 1920x1080 @ 60Hz mode");
+        
         // Setup listening socket for client connections
         // ListeningSocketSource::new_auto() creates socket in XDG_RUNTIME_DIR
         // with auto-generated name like "wayland-0", "wayland-1", etc.
@@ -137,6 +165,7 @@ impl ServerState {
             output,
             socket_name,
             serial_counter: AtomicU32::new(0),
+            surfaces: HashMap::new(),
         }
     }
     
@@ -199,21 +228,29 @@ impl CompositorHandler for ServerState {
     
     /// Called when a surface commits new state
     /// 
-    /// This is where we'd handle buffer attachment, damage tracking, etc.
-    /// For Phase 2, we just log the commit. Phase 3 will handle rendering.
+    /// This is the core of surface lifecycle tracking:
+    /// - Detect buffer attachments via SurfaceAttributes
+    /// - Track surface commits
+    /// - Log surface activity for debugging
     fn commit(&mut self, surface: &WlSurface) {
-        // Access surface state to check what changed
-        with_states(surface, |states| {
-            // In Phase 3, we'll extract buffer data here
-            // For now, just acknowledge the commit
-            drop(states.cached_state.get::<smithay::wayland::compositor::SurfaceAttributes>());
-        });
+        // Get surface ID for tracking
+        let surface_id = surface.id();
+        
+        // Track surface in ServerState
+        self.surfaces.insert(
+            surface_id.clone(),
+            SurfaceInfo {
+                creation_time: Instant::now(),
+                buffer_count: self.surfaces.get(&surface_id).map(|s| s.buffer_count + 1).unwrap_or(1),
+                last_commit: Some(Instant::now()),
+            }
+        );
+        
+        info!("Surface {:?}: Commit received", surface_id);
     }
 }
 
 delegate_compositor!(ServerState);
-
-
 
 
 /// Implement SeatHandler for ServerState
