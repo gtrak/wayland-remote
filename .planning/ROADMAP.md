@@ -96,7 +96,12 @@ Plans:** 3 plans created
   2. Binary frame protocol sends header (width, height, timestamp) followed by RGBA data
   3. Multiple surfaces tracked and streamed with unique window IDs
   4. Server handles disconnections gracefully without compositor crash
-**Plans:** 3/3 plans complete
+**Plans:** 3 plans created
+
+**Plan List:**
+- [ ] 04-01-PLAN.md — Streaming module foundation with binary protocol
+- [ ] 04-02-PLAN.md — TCP server implementation with client handling
+- [ ] 04-03-PLAN.md — Multi-surface tracking with window IDs
 
 ### Phase 5: Windows Viewer Foundation
 **Provenance:** [A] — Authoritative-driven
@@ -209,7 +214,7 @@ Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 6
 | 1. Project Foundation | 2/4 | In Progress|  |
 | 2. Wayland Core Protocol | 0/TBD | Not started | - |
 | 3. Headless Rendering | 0/3 | Planned | - |
-| 4. TCP Frame Streaming | 0/TBD | Not started | - |
+| 4. TCP Frame Streaming | 0/3 | Planned | - |
 | 5. Windows Viewer Foundation | 0/TBD | Not started | - |
 | 6. Surface-to-HWND Mapping | 0/TBD | Not started | - |
 | 7. XDG Shell Window Management | 0/TBD | Not started | - |
