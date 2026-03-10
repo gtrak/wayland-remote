@@ -57,7 +57,12 @@
   2. Applications can attach buffers and commit surface changes
   3. wl_compositor, wl_surface, and wl_seat globals are available
   4. Surface destruction releases resources without leaks
-**Plans:** TBD
+**Plans:** 3 plans created
+
+**Plan List:**
+- [ ] 02-01-PLAN.md — Core compositor setup (CompositorState, Display, event loop)
+- [ ] 02-02-PLAN.md — Seat and output globals (wl_seat, wl_output, client management)
+- [ ] 02-03-PLAN.md — Surface lifecycle and testing (buffer attach, commit, destruction)
 
 ### Phase 3: Headless Rendering
 **Provenance:** [A] — Authoritative-driven
