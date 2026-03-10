@@ -6,8 +6,8 @@
 use smithay::reexports::{
     calloop::{EventLoop, generic::Generic, Interest, Mode, PostAction},
     wayland_server::{
-        Display, DisplayHandle, protocol::wl_surface::WlSurface, Client, ClientData,
-        DisconnectReason,
+        Display, DisplayHandle, protocol::wl_surface::WlSurface, Client,
+        backend::{ClientData, DisconnectReason, ClientId},
     },
 };
 use smithay::wayland::{
@@ -15,7 +15,6 @@ use smithay::wayland::{
     socket::ListeningSocketSource,
 };
 use smithay::delegate_compositor;
-use std::os::unix::ffi::OsStringExt;
 use std::sync::Arc;
 use tracing::info;
 
@@ -61,16 +60,16 @@ impl ServerState {
         let socket_name = listening_socket.socket_name().to_os_string();
         
         info!("Wayland listening socket created: {}", 
-              String::from_utf8_lossy(socket_name.as_bytes()));
+              socket_name.to_string_lossy());
         
         // Insert socket source into event loop
         // This handles accepting new client connections
         event_loop.handle()
-            .insert_source(listening_socket, |client_stream, _, _| {
+            .insert_source(listening_socket, |client_stream, _, state| {
                 // When a client connects, insert it into the display
                 // with a default ClientState
-                client_stream
-                    .insert_client(Arc::new(ClientState::default()))
+                state.display_handle
+                    .insert_client(client_stream, Arc::new(ClientState::default()))
                     .expect("Failed to insert client");
             })
             .expect("Failed to insert Wayland socket source into event loop");
@@ -80,12 +79,12 @@ impl ServerState {
         event_loop.handle()
             .insert_source(
                 Generic::new(display, Interest::READ, Mode::Level),
-                |_, display, _state| {
+                |_, display, state| {
                     // Dispatch all pending Wayland events
                     // This is unsafe because we're mutating the display
                     // while holding a reference, but Smithay guarantees safety
                     unsafe {
-                        display.get_mut().dispatch().unwrap();
+                        display.get_mut().dispatch_clients(state).unwrap();
                     }
                     Ok(PostAction::Continue)
                 },
@@ -128,12 +127,12 @@ pub struct ClientState {
 /// This trait provides hooks for client lifecycle events.
 impl ClientData for ClientState {
     /// Called when a client completes its initial protocol setup
-    fn initialized(&self, _client_id: Client) {
+    fn initialized(&self, _client_id: ClientId) {
         // Client is ready to use
     }
     
     /// Called when a client disconnects
-    fn disconnected(&self, _client_id: Client, _reason: DisconnectReason) {
+    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {
         // Client disconnected - cleanup happens automatically
         // via CompositorState's internal tracking
     }
@@ -150,7 +149,7 @@ impl CompositorHandler for ServerState {
     
     /// Get per-client compositor state
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        client
+        &client
             .get_data::<ClientState>()
             .unwrap()
             .compositor_state
@@ -165,13 +164,9 @@ impl CompositorHandler for ServerState {
         with_states(surface, |states| {
             // In Phase 3, we'll extract buffer data here
             // For now, just acknowledge the commit
-            let _ = states.cached_state().current::<smithay::wayland::compositor::SurfaceAttributes>();
+            drop(states.cached_state.get::<smithay::wayland::compositor::SurfaceAttributes>());
         });
     }
 }
 
-/// Delegate compositor protocol events to ServerState
-/// 
-/// This macro generates the Dispatch implementations for all
-/// compositor-related protocol objects.
 delegate_compositor!(ServerState);
