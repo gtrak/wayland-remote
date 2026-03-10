@@ -5,7 +5,7 @@
 
 use smithay::backend::renderer::{
     pixman::PixmanRenderer,
-    ExportMem, Bind, Texture,
+    ExportMem, Bind,
 };
 use smithay::backend::allocator::Fourcc;
 use smithay::utils::{Rectangle, Point, Size, Buffer as BufferCoord};
@@ -84,16 +84,17 @@ pub fn extract_rgba_from_buffer(
     // We need owned data because the mapping will be dropped
     let data = pixel_slice.to_vec();
     
-    // Verify we got the expected amount of data
+    // Verify we got the expected amount of data (M-2: reject corrupted frames)
     let expected_size = RgbaData::expected_size(width, height);
     if data.len() != expected_size {
-        tracing::warn!(
-            "Extracted {} bytes, expected {} for {}x{} frame",
+        tracing::error!(
+            "Size mismatch: extracted {} bytes, expected {} for {}x{} frame",
             data.len(),
             expected_size,
             width,
             height
         );
+        return None; // M-2: Return None to prevent storing corrupted frames
     }
     
     Some(RgbaData::new(width, height, data))

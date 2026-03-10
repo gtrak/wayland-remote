@@ -345,6 +345,8 @@ impl CompositorHandler for ServerState {
                     // Extract RGBA pixel data from the rendered buffer (REND-03)
                     // Buffer is held until extraction completes per Pattern 4
                     if let Some(rgba_data) = pixel_export::extract_rgba_pixels(&mut self.renderer, surface, buffer) {
+                        // M-3: Remove old frame before inserting new one to prevent unbounded memory growth
+                        self.captured_frames.remove(&surface_id);
                         self.captured_frames.insert(surface_id.clone(), rgba_data.clone());
                         info!("Surface {:?}: Extracted RGBA pixels ({} bytes)", surface_id, rgba_data.byte_size());
                     }
