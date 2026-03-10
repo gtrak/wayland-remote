@@ -28,6 +28,7 @@ use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
+use smithay::backend::renderer::pixman::PixmanRenderer;
 
 use wayland_remote_server::handlers::{seat, output};
 
@@ -77,6 +78,8 @@ pub struct ServerState {
     serial_counter: AtomicU32,
     /// Track active surfaces for lifecycle management
     pub surfaces: HashMap<ObjectId, SurfaceInfo>,
+    /// PixmanRenderer for headless software rendering
+    pub renderer: PixmanRenderer,
 }
 
 impl ServerState {
@@ -93,6 +96,10 @@ impl ServerState {
     /// Self containing the initialized compositor state and socket name
     pub fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
         let dh = display.handle();
+        
+        // Initialize PixmanRenderer for headless software rendering (REND-01)
+        let renderer = PixmanRenderer::new().expect("Failed to create PixmanRenderer");
+        info!("PixmanRenderer initialized for headless software rendering");
         
         // Initialize compositor state - this advertises wl_compositor global
         let compositor_state = CompositorState::new::<Self>(&dh);
@@ -172,6 +179,7 @@ impl ServerState {
             output_manager_state,
             output,
             shm_state,
+            renderer,
             socket_name,
             serial_counter: AtomicU32::new(0),
             surfaces: HashMap::new(),
