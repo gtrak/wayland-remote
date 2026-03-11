@@ -79,6 +79,8 @@ Phase: 3 (1/3 plans complete)
 | Phase 03-01 P03-01 | 5 min | 2 tasks | 2 files |
 | Phase 03-02 P03-02 | 16 min | 4 tasks | 4 files |
 | Phase 03-headless-rendering P03 | 18 min | 4 tasks | 3 files |
+| Phase 04 P01 | 17 min | 2 tasks | 5 files |
+| Phase 04-tcp-frame-streaming P04-02 | 14 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
