@@ -24,7 +24,7 @@ These are the human-defined requirements. Each maps to roadmap phases.
 - [x] **STREAM-01**: TCP server accepts connections from Windows viewer
 - [x] **STREAM-02**: Frame header is sent (width, height, timestamp, size)
 - [x] **STREAM-03**: Raw RGBA pixel data is streamed over TCP
-- [ ] **STREAM-04**: Multiple surfaces can be tracked and streamed
+- [x] **STREAM-04**: Multiple surfaces can be tracked and streamed
 
 ### Windows Viewer
 
@@ -90,7 +90,7 @@ Explicitly excluded from this project.
 | STREAM-01 | Phase 4 | Complete |
 | STREAM-02 | Phase 4 | Complete |
 | STREAM-03 | Phase 4 | Complete |
-| STREAM-04 | Phase 4 | Pending |
+| STREAM-04 | Phase 4 | Complete |
 | VIEW-01 | Phase 5 | Pending |
 | VIEW-02 | Phase 5 | Pending |
 | VIEW-03 | Phase 6 | Pending |

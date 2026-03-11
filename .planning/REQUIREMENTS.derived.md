@@ -28,7 +28,7 @@ These are derived from authoritative requirements during planning. They represen
 - [x] **DER-STREAM-01** (from STREAM-01): Tokio TCP listener on configurable port
 - [x] **DER-STREAM-02** (from STREAM-01): Handle multiple concurrent connections
 - [x] **DER-STREAM-03** (from STREAM-02): Binary frame header protocol (u32 width, height, size; u64 timestamp)
-- [ ] **DER-STREAM-04** (from STREAM-03): Send raw pixel buffer over TCP
+- [x] **DER-STREAM-04** (from STREAM-03): Send raw pixel buffer over TCP
 - [ ] **DER-STREAM-05** (from STREAM-04): Track surface IDs and map to client windows
 
 ### Windows Viewer

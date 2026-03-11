@@ -99,9 +99,9 @@ Plans:** 3 plans created
 **Plans:** 3 plans created
 
 **Plan List:**
-- [ ] 04-01-PLAN.md — Streaming module foundation with binary protocol
-- [ ] 04-02-PLAN.md — TCP server implementation with client handling
-- [ ] 04-03-PLAN.md — Multi-surface tracking with window IDs
+- [x] 04-01-PLAN.md — Streaming module foundation with binary protocol
+- [x] 04-02-PLAN.md — TCP server implementation with client handling
+- [x] 04-03-PLAN.md — Multi-surface tracking with window IDs
 
 ### Phase 5: Windows Viewer Foundation
 **Provenance:** [A] — Authoritative-driven
