@@ -33,7 +33,7 @@ These are derived from authoritative requirements during planning. They represen
 
 ### Windows Viewer
 
-- [ ] **DER-VIEW-01** (from VIEW-01): TCP client connects to Linux server
+- [x] **DER-VIEW-01** (from VIEW-01): TCP client connects to Linux server
 - [x] **DER-VIEW-02** (from VIEW-01): Async frame reading with tokio
 - [ ] **DER-VIEW-03** (from VIEW-02): Parse frame header and allocate buffer
 - [ ] **DER-VIEW-04** (from VIEW-02): Use StretchDIBits to display RGBA in HWND
