@@ -5,6 +5,7 @@
 
 use std::ptr;
 
+use tracing::info;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -170,5 +171,17 @@ impl DisplayWindow {
         // via StretchDIBits in the render() method.
         // Just request a redraw to update the display.
         self.window.request_redraw();
+    }
+}
+
+impl Drop for DisplayWindow {
+    fn drop(&mut self) {
+        let window_id = self.window.id();
+        info!(
+            window_id = ?window_id,
+            "DisplayWindow destroyed"
+        );
+        // GdiRenderer's Drop will be called automatically to clean up GDI resources
+        // The winit Window will also be dropped automatically
     }
 }
