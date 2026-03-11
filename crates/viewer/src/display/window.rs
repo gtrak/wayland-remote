@@ -26,6 +26,9 @@ pub struct DisplayWindow {
     window: Window,
     /// GDI renderer for frame display
     renderer: GdiRenderer,
+    /// Last resized dimensions for threshold-based resizing
+    last_resized_width: Option<u32>,
+    last_resized_height: Option<u32>,
 }
 
 impl DisplayWindow {
@@ -54,6 +57,8 @@ impl DisplayWindow {
         Self {
             window,
             renderer: GdiRenderer::new(),
+            last_resized_width: None,
+            last_resized_height: None,
         }
     }
 
@@ -65,12 +70,28 @@ impl DisplayWindow {
     /// # Arguments
     /// * `frame` - The frame to display
     pub fn submit_frame(&mut self, frame: &Frame) {
-        // Resize window to match frame dimensions if different
+        // Resize window to match frame dimensions if significantly different
+        // Uses threshold-based resizing to prevent flickering from minor dimension changes
         let current_size = self.window.inner_size();
-        let new_size = PhysicalSize::new(frame.header.width, frame.header.height);
+        let new_width = frame.header.width;
+        let new_height = frame.header.height;
         
-        if current_size.width != new_size.width || current_size.height != new_size.height {
-            self.window.set_inner_size(new_size);
+        // Only resize if this is the first frame or dimensions changed by more than 10%
+        let should_resize = match (self.last_resized_width, self.last_resized_height) {
+            (None, None) => true, // First frame - always resize
+            (Some(last_w), Some(last_h)) => {
+                // Calculate percentage change for each dimension
+                let width_change = ((new_width as i32 - last_w as i32).abs() as f64 / last_w as f64) * 100.0;
+                let height_change = ((new_height as i32 - last_h as i32).abs() as f64 / last_h as f64) * 100.0;
+                width_change > 10.0 || height_change > 10.0
+            }
+            _ => true, // Fallback - resize if one dimension is missing
+        };
+        
+        if should_resize && (current_size.width != new_width || current_size.height != new_height) {
+            self.window.set_inner_size(PhysicalSize::new(new_width, new_height));
+            self.last_resized_width = Some(new_width);
+            self.last_resized_height = Some(new_height);
         }
 
         // Submit frame to renderer
