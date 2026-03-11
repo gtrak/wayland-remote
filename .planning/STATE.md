@@ -1,11 +1,11 @@
 # STATE: Wayland Remote
 
 **Project:** Wayland Remote Compositor
-**Current Phase:** 05
+**Current Phase:** 06
 **Last Updated:** 2026-03-11
 **Mode:** yolo (comprehensive depth)
-**Current Plan:** 3
-**Total Plans in Phase:** 3
+**Current Plan:** 02
+**Total Plans in Phase:** 4
 
 ---
 
@@ -37,20 +37,22 @@ Users can run Linux GUI applications remotely and interact with them as native w
 ## Current Position
 
 ### Phase Status
-- **Active Phase:** Phase 5 — Windows Viewer Foundation
-- **Next Phase:** Phase 6 — Performance Optimization
-- **Phase Completion:** 2/8 phases
+- **Active Phase:** Phase 6 — Surface to Hwnd Mapping
+- **Next Phase:** Phase 7 — XDG Toplevel Protocol
+- **Phase Completion:** 3/8 phases
 
 ```
-[▓▓▓▓▓▓▓▓▓▓░░░░░░] 62.5% Overall Progress
-Phase: 5 (1/3 plans complete)
+[▓▓▓▓▓▓▓▓▓▓▓▓░░░░] 75% Overall Progress
+Phase: 6 (1/4 plans complete)
+```
 ```
 ### Current Plan
-- **Plan:** 05-01 (TCP Client Foundation)
-- **Status:** Phase complete — ready for verification
+- **Plan:** 06-01 (WindowManager Core)
+- **Status:** Complete
 - **Blocking:** None
 
 ### Recent Activity
+- [2026-03-11] Phase 6 Plan 01 completed (WindowManager Core with bidirectional mappings)
 - [2026-03-11] Phase 5 Plan 01 completed (TCP Client Foundation with Tokio async runtime)
 - [2026-03-11] Phase 4 Plan 03 completed (Multi-surface tracking with SurfaceTracker)
 - [2026-03-10] Phase 3 Plan 01 completed (PixmanRenderer initialization)
@@ -86,6 +88,7 @@ Phase: 5 (1/3 plans complete)
 | Phase 05-windows-viewer-foundation P05-01 | 12 min | 3 tasks | 4 files |
 | Phase 05-02 P05-02 | 11 min | 3 tasks | 8 files |
 | Phase 05-windows-viewer-foundation P03 | 4 min | 3 tasks | 3 files |
+| Phase 06-01 P06-01 | 2 min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -126,22 +129,23 @@ These must be addressed in their respective phases:
 ## Session Continuity
 
 ### Current Focus
-**Phase 5: Windows Viewer Foundation**
-- Establish async TCP client for frame streaming
-- Create native Windows window with GDI display
-- Wire up frame rendering pipeline
+**Phase 6: Surface to Hwnd Mapping**
+- Implement WindowManager for multi-window tracking
+- Bidirectional mappings for frame and event routing
+- Integrate with ViewerApp
 
 ### Next Actions
-1. Execute plan 05-02 (Window creation with winit)
-2. Execute plan 05-03 (GDI frame rendering)
-3. Verify Phase 5 completion
+1. Execute plan 06-02 (Integrate WindowManager with ViewerApp)
+2. Execute plan 06-03 (Frame routing to correct window)
+3. Execute plan 06-04 (Event routing from windows)
 
 ### State of the World
 - Project definition: ✓ Complete
 - Research: ✓ Complete (6 pitfalls documented)
 - Requirements: ✓ Complete (22 v1 requirements)
 - Roadmap: ✓ Complete (8 phases defined)
-- Phase 5: ⏳ In Progress (1/3 plans complete)
+- Phase 5: ✓ Complete (3/3 plans)
+- Phase 6: ⏳ In Progress (1/4 plans complete)
 ---
 
 ## Blockers
@@ -151,4 +155,4 @@ None currently.
 ---
 
 *State initialized: 2025-03-10*
-*Last Activity: 2026-03-10*
+*Last Activity: 2026-03-11*
