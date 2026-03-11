@@ -116,7 +116,12 @@ Plans:** 3 plans created
   2. Frame header parsed correctly (width, height, timestamp)
   3. RGBA frames displayed using GDI StretchDIBits
   4. At least one window visible with correct colors and dimensions
-**Plans:** TBD
+**Plans:** 3 plans created
+
+**Plan List:**
+- [ ] 05-01-PLAN.md — TCP client foundation (network module, protocol parser, async client)
+- [ ] 05-02-PLAN.md — Window display with GDI rendering (winit + GDI StretchDIBits)
+- [ ] 05-03-PLAN.md — Integration (main entry, channel wiring, end-to-end flow)
 
 ### Phase 6: Surface-to-HWND Mapping
 **Provenance:** [A] — Authoritative-driven
