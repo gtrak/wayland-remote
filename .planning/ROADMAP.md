@@ -15,7 +15,7 @@
 - [x] **Phase 3: Headless Rendering** - Offscreen rendering pipeline with Pixman and RGBA capture (completed 2026-03-10)
 - [ ] **Phase 4: TCP Frame Streaming** - Binary protocol server streaming frames to viewer
 - [ ] **Phase 5: Windows Viewer Foundation** - Windows application with TCP client and basic display
-- [ ] **Phase 6: Surface-to-HWND Mapping** - Multi-window support with proper window lifecycle
+- [x] **Phase 6: Surface-to-HWND Mapping** - Multi-window support with proper window lifecycle (completed 2026-03-11)
 - [ ] **Phase 7: XDG Shell Window Management** - Desktop window management (maximize, minimize, close, popups)
 - [ ] **Phase 8: Bidirectional Input** - Keyboard and mouse from Windows to Linux applications
 
@@ -136,7 +136,7 @@ Plans:** 3 plans created
   2. Surface creation/destroy properly manages HWND lifecycle
   3. Window resizes handled (frame scaling via StretchDIBits)
   4. Multiple windows visible simultaneously with correct content
-**Plans:** 4 plans created
+**Plans:** 4/4 plans complete
 
 **Plan List:**
 - [ ] 06-01-PLAN.md — WindowManager core with bidirectional HashMaps
@@ -227,7 +227,7 @@ Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 6
 | 3. Headless Rendering | 3/3 | ✓ Complete | 2026-03-10 |
 | 4. TCP Frame Streaming | 3/3 | Planned | - |
 | 5. Windows Viewer Foundation | 0/TBD | Not started | - |
-| 6. Surface-to-HWND Mapping | 0/TBD | Not started | - |
+| 6. Surface-to-HWND Mapping | 0/TBD | Complete    | 2026-03-11 |
 | 7. XDG Shell Window Management | 0/TBD | Not started | - |
 | 8. Bidirectional Input | 0/TBD | Not started | - |
 
