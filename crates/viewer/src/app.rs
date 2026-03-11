@@ -25,8 +25,8 @@ use std::sync::mpsc;
 use std::thread;
 
 use winit::application::ApplicationHandler;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::event::StartCause;
+use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::WindowId;
 
 use tracing::{debug, error, info, warn};
@@ -89,7 +89,7 @@ impl ViewerApp {
                     height = frame.header.height,
                     "Processing frame"
                 );
-                
+
                 // Get or create window for this frame's window_id (lazy creation)
                 let window = self.window_manager.get_or_create_window(
                     frame.header.window_id,
@@ -97,8 +97,11 @@ impl ViewerApp {
                     frame.header.height,
                     event_loop,
                 );
-                
-                debug!(window_id = frame.header.window_id, "Frame submitted to window");
+
+                debug!(
+                    window_id = frame.header.window_id,
+                    "Frame submitted to window"
+                );
                 window.submit_frame(&frame);
             }
         }
@@ -135,13 +138,13 @@ impl ApplicationHandler for ViewerApp {
                 return;
             }
         };
-        
+
         match event {
             winit::event::WindowEvent::CloseRequested => {
                 info!(compositor_window_id, "Window closed, removing from manager");
                 // Remove the window from the manager
                 self.window_manager.remove_window(compositor_window_id);
-                
+
                 // Exit if no more windows
                 if self.window_manager.is_empty() {
                     info!("No more windows, shutting down");
@@ -154,8 +157,13 @@ impl ApplicationHandler for ViewerApp {
                     window.on_paint();
                 }
             }
-winit::event::WindowEvent::Resized(size) => {
-                debug!(compositor_window_id, width = size.width, height = size.height, "Window resized");
+            winit::event::WindowEvent::Resized(size) => {
+                debug!(
+                    window_id = compositor_window_id,
+                    width = size.width,
+                    height = size.height,
+                    "Window resized"
+                );
                 // Route resize event to the correct window
                 if let Some(window) = self.window_manager.get_window_mut(compositor_window_id) {
                     window.handle_resize(size.width, size.height);
@@ -186,8 +194,7 @@ fn spawn_network_thread(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         // Create a dedicated Tokio runtime for network operations
-        let rt = tokio::runtime::Runtime::new()
-            .expect("Failed to create Tokio runtime");
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
         rt.block_on(async move {
             info!(address = %server_address, "Starting network client");

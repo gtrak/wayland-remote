@@ -6,10 +6,10 @@
 use std::ptr;
 
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
-use winit::window::{Window, WindowButtons, WindowLevel};
 use winit::dpi::PhysicalSize;
+use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
+use winit::window::{Window, WindowButtons, WindowLevel};
 
 use winapi::shared::windef::HDC;
 use winapi::um::wingdi::{GetDC, ReleaseDC};
@@ -44,7 +44,14 @@ impl DisplayWindow {
     ///
     /// # Returns
     /// A new DisplayWindow instance
-    pub fn new(event_loop: &ActiveEventLoop, title: &str, width: u32, height: u32, x: Option<i32>, y: Option<i32>) -> Self {
+    pub fn new(
+        event_loop: &ActiveEventLoop,
+        title: &str,
+        width: u32,
+        height: u32,
+        x: Option<i32>,
+        y: Option<i32>,
+    ) -> Self {
         // Create window attributes with initial size
         let mut window_attrs = Window::default_attributes()
             .with_title(title)
@@ -81,21 +88,24 @@ impl DisplayWindow {
         let current_size = self.window.inner_size();
         let new_width = frame.header.width;
         let new_height = frame.header.height;
-        
+
         // Only resize if this is the first frame or dimensions changed by more than 10%
         let should_resize = match (self.last_resized_width, self.last_resized_height) {
             (None, None) => true, // First frame - always resize
             (Some(last_w), Some(last_h)) => {
                 // Calculate percentage change for each dimension
-                let width_change = ((new_width as i32 - last_w as i32).abs() as f64 / last_w as f64) * 100.0;
-                let height_change = ((new_height as i32 - last_h as i32).abs() as f64 / last_h as f64) * 100.0;
+                let width_change =
+                    ((new_width as i32 - last_w as i32).abs() as f64 / last_w as f64) * 100.0;
+                let height_change =
+                    ((new_height as i32 - last_h as i32).abs() as f64 / last_h as f64) * 100.0;
                 width_change > 10.0 || height_change > 10.0
             }
             _ => true, // Fallback - resize if one dimension is missing
         };
-        
+
         if should_resize && (current_size.width != new_width || current_size.height != new_height) {
-            self.window.set_inner_size(PhysicalSize::new(new_width, new_height));
+            self.window
+                .set_inner_size(PhysicalSize::new(new_width, new_height));
             self.last_resized_width = Some(new_width);
             self.last_resized_height = Some(new_height);
         }
@@ -113,16 +123,17 @@ impl DisplayWindow {
     pub fn on_paint(&self) {
         // Get the window's device context
         let hwnd = self.window.id().as_raw() as *mut winapi::ctypes::c_void;
-        
+
         unsafe {
             let hdc = GetDC(hwnd);
             if !hdc.is_null() {
                 // Get window client area size
                 let size = self.window.inner_size();
-                
+
                 // Render the front buffer
-                self.renderer.render(hdc, size.width as i32, size.height as i32);
-                
+                self.renderer
+                    .render(hdc, size.width as i32, size.height as i32);
+
                 ReleaseDC(hwnd, hdc);
             }
         }
@@ -152,12 +163,12 @@ impl DisplayWindow {
     /// # Arguments
     /// * `width` - New window width in pixels
     /// * `height` - New window height in pixels
+    /// Parameters accepted for API consistency but current window size
+    /// is obtained directly from winit when rendering
     pub fn handle_resize(&self, _width: u32, _height: u32) {
         // The renderer automatically handles aspect ratio preservation
         // via StretchDIBits in the render() method.
         // Just request a redraw to update the display.
         self.window.request_redraw();
     }
-}
-
 }
