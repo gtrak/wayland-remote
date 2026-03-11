@@ -33,6 +33,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::display::DisplayWindow;
 use crate::network::{Frame, TcpClient};
+use crate::window_manager::WindowManager;
 
 /// Channel buffer size for frame streaming
 /// Allows buffering multiple frames to handle network bursts
@@ -42,8 +43,8 @@ const FRAME_BUFFER_SIZE: usize = 10;
 ///
 /// Manages the window, network connection, and frame rendering pipeline.
 pub struct ViewerApp {
-    /// Display window (created after event loop is available)
-    display_window: Option<DisplayWindow>,
+    /// Window manager for multi-window support
+    window_manager: WindowManager,
     /// Server address to connect to
     server_address: String,
     /// Frame receiver channel from network thread
@@ -60,7 +61,7 @@ impl ViewerApp {
     /// A new ViewerApp instance
     pub fn new(server_address: impl Into<String>) -> Self {
         Self {
-            display_window: None,
+            window_manager: WindowManager::new(),
             server_address: server_address.into(),
             frame_rx: None,
         }
@@ -76,85 +77,89 @@ impl ViewerApp {
 
     /// Process pending frames from the receiver
     ///
-    /// Reads all available frames and submits them to the display window.
-    fn process_frames(&mut self) {
+    /// Reads all available frames and routes each to its window via WindowManager.
+    /// Windows are created lazily when the first frame arrives for a window_id.
+    fn process_frames(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(ref mut rx) = self.frame_rx {
             // Process all available frames
             while let Ok(frame) = rx.try_recv() {
-                if let Some(ref mut window) = self.display_window {
-                    debug!(
-                        window_id = frame.header.window_id,
-                        width = frame.header.width,
-                        height = frame.header.height,
-                        "Processing frame"
-                    );
-                    window.submit_frame(&frame);
-                }
+                debug!(
+                    window_id = frame.header.window_id,
+                    width = frame.header.width,
+                    height = frame.header.height,
+                    "Processing frame"
+                );
+                
+                // Get or create window for this frame's window_id (lazy creation)
+                let window = self.window_manager.get_or_create_window(
+                    frame.header.window_id,
+                    frame.header.width,
+                    frame.header.height,
+                    event_loop,
+                );
+                
+                info!(window_id = frame.header.window_id, "Window created or retrieved for frame");
+                window.submit_frame(&frame);
             }
         }
     }
 }
 
 impl ApplicationHandler for ViewerApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Create window on resume (winit 0.30 best practice)
-        if self.display_window.is_none() {
-            // Default window size (will be updated by first frame)
-            let default_width = 800;
-            let default_height = 600;
-
-            let window = DisplayWindow::new(
-                event_loop,
-                "Wayland Remote Viewer",
-                default_width,
-                default_height,
-                None, // x position - use default
-                None, // y position - use default
-            );
-
-            info!(
-                width = default_width,
-                height = default_height,
-                "Created display window"
-            );
-
-            self.display_window = Some(window);
-        }
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+        // Window creation is now lazy - happens in process_frames() when first frame arrives
+        // This method is kept for ApplicationHandler compliance but does nothing
+        debug!("Application resumed, windows will be created lazily on first frame");
     }
 
     fn finished(&mut self, _event_loop: &ActiveEventLoop) {
         info!("Application finished");
     }
 
-    fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: StartCause) {
-        // Process any pending frames on new events
-        self.process_frames();
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, _cause: StartCause) {
+        // Process any pending frames on new events (with event_loop for window creation)
+        self.process_frames(event_loop);
     }
 
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
+        window_id: WindowId,
         event: winit::event::WindowEvent,
     ) {
+        // Use reverse mapping to get window_id from winit WindowId
+        let window_id = match self.window_manager.get_window_id(window_id) {
+            Some(id) => id,
+            None => {
+                warn!("Event received for unknown window: {:?}", window_id);
+                return;
+            }
+        };
+        
         match event {
             winit::event::WindowEvent::CloseRequested => {
-                info!("Window closed, shutting down");
-                // Exit the event loop
-                event_loop.exit();
+                info!(window_id, "Window closed, removing from manager");
+                // Remove the window from the manager
+                self.window_manager.remove_window(window_id);
+                
+                // Exit if no more windows
+                if self.window_manager.is_empty() {
+                    info!("No more windows, shutting down");
+                    event_loop.exit();
+                }
             }
             winit::event::WindowEvent::RedrawRequested => {
-                // Render the current frame
-                if let Some(ref window) = self.display_window {
+                // Render the current frame for this window
+                if let Some(window) = self.window_manager.get_window(window_id) {
                     window.on_paint();
                 }
             }
             winit::event::WindowEvent::Resized(size) => {
-                debug!(width = size.width, height = size.height, "Window resized");
+                debug!(window_id, width = size.width, height = size.height, "Window resized");
                 // Window will automatically redraw on resize
             }
             _ => {
-                // Ignore other events
+                // Ignore other events for now
             }
         }
     }
@@ -293,6 +298,6 @@ mod tests {
     fn test_app_creation() {
         let app = ViewerApp::new("127.0.0.1:8080");
         assert_eq!(app.server_address, "127.0.0.1:8080");
-        assert!(app.display_window.is_none());
+        assert!(app.window_manager.is_empty());
     }
 }
