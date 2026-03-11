@@ -108,6 +108,8 @@ impl ApplicationHandler for ViewerApp {
                 "Wayland Remote Viewer",
                 default_width,
                 default_height,
+                None, // x position - use default
+                None, // y position - use default
             );
 
             info!(

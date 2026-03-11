@@ -32,24 +32,30 @@ pub struct DisplayWindow {
 }
 
 impl DisplayWindow {
-    /// Create a new display window with the given title and initial size
+    /// Create a new display window with the given title, size, and optional position
     ///
     /// # Arguments
     /// * `event_loop` - The winit event loop to create the window with
     /// * `title` - Window title
     /// * `width` - Initial window width in pixels
     /// * `height` - Initial window height in pixels
+    /// * `x` - Optional window X position (None for default)
+    /// * `y` - Optional window Y position (None for default)
     ///
     /// # Returns
     /// A new DisplayWindow instance
-    pub fn new(event_loop: &ActiveEventLoop, title: &str, width: u32, height: u32) -> Self {
+    pub fn new(event_loop: &ActiveEventLoop, title: &str, width: u32, height: u32, x: Option<i32>, y: Option<i32>) -> Self {
         // Create window attributes with initial size
-        let window_attrs = Window::default_attributes()
+        let mut window_attrs = Window::default_attributes()
             .with_title(title)
             .with_inner_size(PhysicalSize::new(width, height))
             .with_window_button(WindowButtons::DEFAULT)
             .with_window_level(WindowLevel::Normal);
 
+        // Set position if provided
+        if let (Some(x), Some(y)) = (x, y) {
+            window_attrs = window_attrs.with_position(winit::dpi::PhysicalPosition::new(x, y));
+        }
         let window = event_loop
             .create_window(window_attrs)
             .expect("Failed to create window");
