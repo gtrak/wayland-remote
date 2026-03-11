@@ -31,7 +31,7 @@ These are the human-defined requirements. Each maps to roadmap phases.
 - [x] **VIEW-01**: Windows application connects to TCP server
 - [x] **VIEW-02**: Received frames are displayed in Win32 windows using GDI
 - [x] **VIEW-03**: Each Wayland surface maps to a native Windows HWND
-- [ ] **VIEW-04**: Window resizes are handled (frame scaling)
+- [x] **VIEW-04**: Window resizes are handled (frame scaling)
 
 ### Input Handling
 
@@ -94,7 +94,7 @@ Explicitly excluded from this project.
 | VIEW-01 | Phase 5 | Complete 2026-03-11 |
 | VIEW-02 | Phase 5 | Complete |
 | VIEW-03 | Phase 6 | Complete |
-| VIEW-04 | Phase 6 | Pending |
+| VIEW-04 | Phase 6 | Complete |
 | INPUT-01 | Phase 8 | Pending |
 | INPUT-02 | Phase 8 | Pending |
 | INPUT-03 | Phase 8 | Pending |
