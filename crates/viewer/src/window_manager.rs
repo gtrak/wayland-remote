@@ -259,17 +259,16 @@ mod tests {
     #[test]
     fn test_window_lifecycle_is_empty_and_remove() {
         // Test the lifecycle: create -> close -> verify removed -> verify is_empty()
-        // Note: This test verifies the is_empty() and remove_window() methods
-        // without requiring an actual winit event loop.
+        // Note: Actual window creation requires an ActiveEventLoop which cannot be
+        // created in unit tests. This test verifies the is_empty() and remove_window()
+        // methods work correctly on an empty manager.
         let mut wm = WindowManager::new();
         
         // Initially empty
         assert!(wm.is_empty());
         assert_eq!(wm.window_count(), 0);
         
-        // We cannot create actual windows without an event loop, but we can
-        // verify that remove_window returns None for non-existent windows
-        // and that is_empty() remains true
+        // Removing a non-existent window returns None
         let removed = wm.remove_window(1);
         assert!(removed.is_none());
         assert!(wm.is_empty());
@@ -280,5 +279,8 @@ mod tests {
             assert!(wm.remove_window(window_id).is_none());
             assert!(wm.is_empty());
         }
+        
+        // Full lifecycle testing (create -> close -> verify removed) requires
+        // integration tests with an actual event loop.
     }
 }

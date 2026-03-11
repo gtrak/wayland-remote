@@ -153,12 +153,13 @@ impl ApplicationHandler for ViewerApp {
             }
             winit::event::WindowEvent::RedrawRequested => {
                 // Render the current frame for this window
+                info!(compositor_window_id, "Redraw requested");
                 if let Some(window) = self.window_manager.get_window(compositor_window_id) {
                     window.on_paint();
                 }
             }
             winit::event::WindowEvent::Resized(size) => {
-                debug!(
+                info!(
                     window_id = compositor_window_id,
                     width = size.width,
                     height = size.height,
