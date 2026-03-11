@@ -93,6 +93,8 @@ pub struct ServerState {
     pub offscreen_buffers: HashMap<ObjectId, Image<'static, 'static>>,
     /// Per-surface captured RGBA frames for streaming (REND-03)
     pub captured_frames: HashMap<ObjectId, RgbaData>,
+    window_id_map: HashMap<ObjectId, u32>,
+    next_window_id: u32,
     /// Streaming server configuration (STREAM-01, STREAM-02)
     pub streaming_server: StreamingServer,
     /// Streaming state for TCP frame delivery
@@ -202,6 +204,8 @@ impl ServerState {
             surfaces: HashMap::new(),
             offscreen_buffers: HashMap::new(),
             captured_frames: HashMap::new(),
+            window_id_map: HashMap::new(),
+            next_window_id: 0,
             streaming_server: StreamingServer::new(6080),
             streaming_state: Arc::new(RwLock::new(StreamingState::new())),
         }
@@ -223,21 +227,25 @@ impl ServerState {
     /// Get frames ready for streaming
     ///
     /// Converts captured_frames (HashMap<ObjectId, RgbaData>) to streaming format
-    /// with window_id mapping for TCP transmission.
+    /// with stable window_id mapping for TCP transmission.
     ///
     /// # Returns
     /// HashMap<window_id, FrameData> ready for streaming
-    pub fn get_frames_for_streaming(&self) -> std::collections::HashMap<u32, FrameData> {
+    pub fn get_frames_for_streaming(&mut self) -> std::collections::HashMap<u32, FrameData> {
+        let timestamp_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+
         self.captured_frames
             .iter()
-            .enumerate()
-            .map(|(idx, (_surface_id, rgba))| {
-                let window_id = idx as u32;
-                let timestamp_us = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_micros() as u64;
-                
+            .map(|(surface_id, rgba)| {
+                let window_id = *self.window_id_map.entry(surface_id.clone()).or_insert_with(|| {
+                    let id = self.next_window_id;
+                    self.next_window_id += 1;
+                    id
+                });
+
                 (window_id, FrameData::new(
                     rgba.width,
                     rgba.height,
@@ -251,9 +259,9 @@ impl ServerState {
     /// Update streaming state with newly captured frames
     ///
     /// Called after frame capture to make frames available for streaming.
-    pub async fn update_streaming_state(&self) {
+    pub async fn update_streaming_state(&mut self) {
         let frames = self.get_frames_for_streaming();
-        let mut state = self.streaming_state.write().await;
+        let state = self.streaming_state.write().await;
         
         for (window_id, frame) in frames {
             state.surfaces.write().await.insert(window_id, frame);
@@ -263,7 +271,8 @@ impl ServerState {
     /// Remove a surface from streaming state
     ///
     /// Called when a surface is destroyed.
-    pub async fn remove_streaming_surface(&self, window_id: u32) {
+    pub async fn remove_streaming_surface(&mut self, window_id: u32) {
+        self.window_id_map.retain(|_, &mut v| v != window_id);
         let mut state = self.streaming_state.write().await;
         state.remove_surface(window_id).await;
     }
