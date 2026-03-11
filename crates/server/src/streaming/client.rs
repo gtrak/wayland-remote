@@ -75,6 +75,14 @@ pub async fn handle_client(
         }
         // Write half is dropped here
     });
+    // Spawn frame streaming task - continuously reads frames and sends to client
+    let state_clone = state.clone();
+    let tx_clone = tx.clone();
+    let stream_handle = tokio::spawn(async move {
+        if let Err(e) = stream_frames(tx_clone, state_clone, addr).await {
+            debug!("Frame streaming error for {}: {}", addr, e);
+        }
+    });
 
     // Read loop - handle incoming viewer requests using read half
     // For now, we just wait for the client to disconnect
@@ -92,8 +100,9 @@ pub async fn handle_client(
     // Drop sender to signal frame sender task to stop
     drop(tx);
 
-    // Wait for sender task to complete
+    // Wait for sender and streamer tasks to complete
     let _ = send_handle.await;
+    let _ = stream_handle.await;
 
     // Unregister client on disconnect
     state.write().await.unregister_client(addr).await;
