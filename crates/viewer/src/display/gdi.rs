@@ -33,12 +33,14 @@ impl std::fmt::Display for GdiError {
 
 impl std::error::Error for GdiError {}
 
-/// Buffer containing bitmap handle and pixel data pointer
+/// Buffer containing bitmap handle, pixel data pointer, and BITMAPINFO
 struct Buffer {
     /// Handle to the bitmap
     bitmap: HBITMAP,
     /// Pointer to pixel data (for StretchDIBits)
     bits_ptr: *mut winapi::ctypes::c_void,
+    /// BITMAPINFO structure for StretchDIBits
+    bmi: BITMAPINFO,
 }
 
 /// GDI renderer for displaying RGBA frames
@@ -84,7 +86,9 @@ impl GdiRenderer {
         let buffer = match self.create_dib(width, height, &bgra_data) {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("Failed to create DIB: {}", e);
+                // Log frame submission failure with tracing for visibility
+                eprintln!("ERROR: Failed to create DIB for frame {}: {}", frame.header.window_id, e);
+                // Note: Frame is silently dropped when GDI resources cannot be allocated
                 return;
             }
         };
@@ -202,6 +206,7 @@ impl GdiRenderer {
             Ok(Buffer {
                 bitmap: hbitmap,
                 bits_ptr,
+                bmi,
             })
         }
     }
@@ -256,7 +261,7 @@ impl GdiRenderer {
                         src_width as u32,
                         src_height as u32,
                         buffer.bits_ptr,
-                        &bmi as *const _ as *const _,
+                        &buffer.bmi as *const _ as *const _,
                         0,
                         SRCCOPY,
                     );
