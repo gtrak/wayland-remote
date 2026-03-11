@@ -12,6 +12,8 @@ pub mod handlers;
 /// Rendering module for headless/offscreen rendering
 pub mod rendering;
 
+/// TCP streaming module for frame delivery
+pub mod streaming;
 use tracing::debug;
 /// Server configuration and state
 #[derive(Debug)]

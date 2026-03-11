@@ -36,6 +36,9 @@ use smithay::reexports::pixman::Image;
 use wayland_remote_server::rendering::offscreen;
 use wayland_remote_server::rendering::pixel_export::{self, RgbaData};
 
+// Import streaming module
+use wayland_remote_server::streaming::{StreamingServer, StreamingState, FrameData};
+use tokio::sync::RwLock;
 use wayland_remote_server::handlers::{seat, output};
 
 /// Information about a tracked surface
@@ -90,6 +93,10 @@ pub struct ServerState {
     pub offscreen_buffers: HashMap<ObjectId, Image<'static, 'static>>,
     /// Per-surface captured RGBA frames for streaming (REND-03)
     pub captured_frames: HashMap<ObjectId, RgbaData>,
+    /// Streaming server configuration (STREAM-01, STREAM-02)
+    pub streaming_server: StreamingServer,
+    /// Streaming state for TCP frame delivery
+    pub streaming_state: Arc<RwLock<StreamingState>>,
 }
 
 impl ServerState {
@@ -195,6 +202,8 @@ impl ServerState {
             surfaces: HashMap::new(),
             offscreen_buffers: HashMap::new(),
             captured_frames: HashMap::new(),
+            streaming_server: StreamingServer::new(6080),
+            streaming_state: Arc::new(RwLock::new(StreamingState::new())),
         }
     }
     
@@ -210,6 +219,55 @@ impl ServerState {
         path.push(&self.socket_name);
         path
     }
+    
+    /// Get frames ready for streaming
+    ///
+    /// Converts captured_frames (HashMap<ObjectId, RgbaData>) to streaming format
+    /// with window_id mapping for TCP transmission.
+    ///
+    /// # Returns
+    /// HashMap<window_id, FrameData> ready for streaming
+    pub fn get_frames_for_streaming(&self) -> std::collections::HashMap<u32, FrameData> {
+        self.captured_frames
+            .iter()
+            .enumerate()
+            .map(|(idx, (_surface_id, rgba))| {
+                let window_id = idx as u32;
+                let timestamp_us = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() as u64;
+                
+                (window_id, FrameData::new(
+                    rgba.width,
+                    rgba.height,
+                    timestamp_us,
+                    rgba.data.clone(),
+                ))
+            })
+            .collect()
+    }
+    
+    /// Update streaming state with newly captured frames
+    ///
+    /// Called after frame capture to make frames available for streaming.
+    pub async fn update_streaming_state(&self) {
+        let frames = self.get_frames_for_streaming();
+        let mut state = self.streaming_state.write().await;
+        
+        for (window_id, frame) in frames {
+            state.surfaces.write().await.insert(window_id, frame);
+        }
+    }
+    
+    /// Remove a surface from streaming state
+    ///
+    /// Called when a surface is destroyed.
+    pub async fn remove_streaming_surface(&self, window_id: u32) {
+        let mut state = self.streaming_state.write().await;
+        state.remove_surface(window_id).await;
+    }
+
 }
 
 /// Per-client state
