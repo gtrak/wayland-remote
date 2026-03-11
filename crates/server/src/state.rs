@@ -38,6 +38,7 @@ use wayland_remote_server::rendering::pixel_export::{self, RgbaData};
 
 // Import streaming module
 use wayland_remote_server::streaming::{StreamingServer, StreamingState, FrameData};
+use wayland_remote_server::streaming::surface::SurfaceTracker;
 use tokio::sync::RwLock;
 use wayland_remote_server::handlers::{seat, output};
 
@@ -93,8 +94,8 @@ pub struct ServerState {
     pub offscreen_buffers: HashMap<ObjectId, Image<'static, 'static>>,
     /// Per-surface captured RGBA frames for streaming (REND-03)
     pub captured_frames: HashMap<ObjectId, RgbaData>,
-    window_id_map: HashMap<ObjectId, u32>,
-    next_window_id: u32,
+    /// Surface tracker for unique window ID management (STREAM-04)
+    pub surface_tracker: Arc<SurfaceTracker>,
     /// Streaming server configuration (STREAM-01, STREAM-02)
     pub streaming_server: StreamingServer,
     /// Streaming state for TCP frame delivery
@@ -204,8 +205,7 @@ impl ServerState {
             surfaces: HashMap::new(),
             offscreen_buffers: HashMap::new(),
             captured_frames: HashMap::new(),
-            window_id_map: HashMap::new(),
-            next_window_id: 0,
+            surface_tracker: Arc::new(SurfaceTracker::new()),
             streaming_server: StreamingServer::new(6080),
             streaming_state: Arc::new(RwLock::new(StreamingState::new())),
         }
@@ -240,11 +240,8 @@ impl ServerState {
         self.captured_frames
             .iter()
             .map(|(surface_id, rgba)| {
-                let window_id = *self.window_id_map.entry(surface_id.clone()).or_insert_with(|| {
-                    let id = self.next_window_id;
-                    self.next_window_id += 1;
-                    id
-                });
+                // Allocate window ID using SurfaceTracker
+                let window_id = self.surface_tracker.allocate_window_id(surface_id.clone());
 
                 (window_id, FrameData::new(
                     rgba.width,
@@ -271,12 +268,17 @@ impl ServerState {
     /// Remove a surface from streaming state
     ///
     /// Called when a surface is destroyed.
-    pub async fn remove_streaming_surface(&mut self, window_id: u32) {
-        self.window_id_map.retain(|_, &mut v| v != window_id);
+    /// Called when a surface is destroyed.
+    pub async fn remove_streaming_surface(&mut self, surface_id: ObjectId) {
+        // Remove from SurfaceTracker
+        let window_id = self.surface_tracker.remove_surface(surface_id.clone());
+        
+        // Remove from streaming state
         let mut state = self.streaming_state.write().await;
-        state.remove_surface(window_id).await;
+        if let Some(wid) = window_id {
+            state.remove_surface(wid).await;
+        }
     }
-
 }
 
 /// Per-client state
