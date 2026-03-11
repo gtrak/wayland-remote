@@ -22,3 +22,4 @@ thiserror = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 winit = { workspace = true }
 raw-window-handle = { workspace = true }
+winapi = { version = "0.3", features = ["wingdi", "windef", "minwindef"] }
