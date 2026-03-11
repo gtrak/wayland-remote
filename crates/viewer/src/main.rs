@@ -42,15 +42,18 @@ fn parse_args(args: env::Args) -> String {
                 }
                 "--help" | "-h" => {
                     print_help();
+                    i += 1;
                     std::process::exit(0);
                 }
                 "--version" | "-v" => {
                     println!("Wayland Remote Viewer {}", env!("CARGO_PKG_VERSION"));
+                    i += 1;
                     std::process::exit(0);
                 }
                 _ => {
                     eprintln!("Unknown argument: {}", args_vec[i]);
                     eprintln!("Use --help for usage information");
+                    i += 1;
                     std::process::exit(1);
                 }
             }
@@ -78,11 +81,7 @@ fn print_help() {
     println!("  wayland-remote-viewer -s localhost:9000");
 }
 
-#[allow(unused_variables)]
 fn main() -> Result<()> {
-    // Parse command line arguments
-    let server_address = parse_args(env::args());
-    
     // Initialize logging
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
@@ -96,6 +95,9 @@ fn main() -> Result<()> {
     
     #[cfg(windows)]
     {
+        // Parse command line arguments
+        let server_address = parse_args(env::args());
+        
         info!("Connecting to server at {}...", server_address);
         
         // Run the viewer application

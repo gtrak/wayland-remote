@@ -172,6 +172,7 @@ impl ApplicationHandler for ViewerApp {
 fn spawn_network_thread(
     server_address: String,
     frame_tx: mpsc::Sender<Frame>,
+    shutdown_rx: mpsc::Receiver<()>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         // Create a dedicated Tokio runtime for network operations
@@ -184,6 +185,12 @@ fn spawn_network_thread(
             let client = TcpClient::new(&server_address);
 
             loop {
+                // Check for shutdown signal
+                if shutdown_rx.try_recv().is_ok() {
+                    info!("Shutdown signal received, stopping network thread");
+                    break;
+                }
+
                 match client.connect().await {
                     Ok(stream) => {
                         info!(address = %server_address, "Connected to server");
@@ -193,6 +200,12 @@ fn spawn_network_thread(
 
                         // Forward frames to the main thread
                         while let Some(frame) = rx.recv().await {
+                            // Check for shutdown signal
+                            if shutdown_rx.try_recv().is_ok() {
+                                info!("Shutdown signal received, stopping network thread");
+                                break;
+                            }
+
                             if frame_tx.send(frame).is_err() {
                                 warn!("Frame receiver dropped, stopping network thread");
                                 break;
@@ -235,9 +248,12 @@ pub fn run(server_address: impl Into<String>) -> Result<(), Box<dyn std::error::
     // Create channel for frame streaming from network thread to UI thread
     let (frame_tx, frame_rx) = mpsc::channel::<Frame>(FRAME_BUFFER_SIZE);
 
+    // Create shutdown channel for graceful network thread termination
+    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
+
     // Spawn network thread
     let server_address_str = server_address.into();
-    let _network_thread = spawn_network_thread(server_address_str.clone(), frame_tx);
+    let network_thread = spawn_network_thread(server_address_str.clone(), frame_tx, shutdown_rx);
 
     info!(address = %server_address_str, "Network thread spawned");
 
@@ -253,9 +269,18 @@ pub fn run(server_address: impl Into<String>) -> Result<(), Box<dyn std::error::
     // Run event loop (window will be created in resumed())
     event_loop.run_app(&mut app)?;
 
+    // Signal network thread to shut down gracefully
+    info!("Signaling network thread to shut down");
+    let _ = shutdown_tx.send(());
+
+    // Wait for network thread to finish
+    info!("Waiting for network thread to exit");
+    if let Err(e) = network_thread.join() {
+        warn!("Network thread panicked: {:?}", e);
+    }
+
     info!("Application exited");
     Ok(())
-}
 
 #[cfg(test)]
 mod tests {
