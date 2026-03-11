@@ -45,6 +45,7 @@ use wayland_remote_server::handlers::{seat, output};
 /// Information about a tracked surface
 #[derive(Debug, Clone)]
 pub struct SurfaceInfo {
+    #[allow(dead_code)]
     /// When the surface was created
     pub creation_time: Instant,
     /// Number of buffer attachments
@@ -268,8 +269,10 @@ impl ServerState {
     /// Remove a surface from streaming state
     ///
     /// Called when a surface is destroyed.
-    /// Called when a surface is destroyed.
     pub async fn remove_streaming_surface(&mut self, surface_id: ObjectId) {
+        // Remove from captured_frames
+        self.captured_frames.remove(&surface_id);
+
         // Remove from SurfaceTracker
         let window_id = self.surface_tracker.remove_surface(surface_id.clone());
         
