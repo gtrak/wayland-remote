@@ -9,5 +9,8 @@ pub mod display;
 pub mod network;
 
 #[cfg(windows)]
+pub mod window_manager;
+
+#[cfg(windows)]
 pub use display::{DisplayWindow, GdiRenderer};
 pub use network::{Frame, FrameHeader, NetworkError, TcpClient};

@@ -4,10 +4,15 @@
 //! with bidirectional HashMap mappings for frame and event routing.
 
 use std::collections::HashMap;
+
+#[cfg(windows)]
 use winit::application::ApplicationHandler;
+#[cfg(windows)]
 use winit::event_loop::ActiveEventLoop;
+#[cfg(windows)]
 use winit::window::WindowId;
 
+#[cfg(windows)]
 use crate::display::DisplayWindow;
 
 /// Window manager for tracking multiple display windows
@@ -156,13 +161,5 @@ mod tests {
         let wm = WindowManager::new();
         assert!(wm.is_empty());
         assert_eq!(wm.window_count(), 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "Window ID must be greater than 0")]
-    fn test_window_id_zero_is_invalid() {
-        let _wm = WindowManager::new();
-        // This would panic if we could call get_or_create_window without event_loop
-        assert!(false);
     }
 }
