@@ -188,7 +188,6 @@ pub async fn start_streaming_server(server: &StreamingServer) -> anyhow::Result<
                 let state = server.state.clone();
                 
                 // Spawn task for handling this client
-                // Spawn task for handling this client
                 tokio::spawn(async move {
                     if let Err(e) = client::handle_client(socket, addr, state).await {
                         warn!("Client {} error: {}", addr, e);
