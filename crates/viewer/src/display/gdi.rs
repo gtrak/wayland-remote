@@ -43,6 +43,13 @@ struct Buffer {
     bmi: BITMAPINFO,
 }
 
+// SAFETY: Buffer contains raw pointers to GDI objects (HBITMAP, bits_ptr).
+// These GDI handles are thread-safe to send between threads (Send) but not
+// to share across threads simultaneously (not Sync) because GDI operations
+// are not thread-safe. The bits_ptr is only accessed through the owning thread.
+unsafe impl Send for Buffer {}
+
+
 /// GDI renderer for displaying RGBA frames
 ///
 /// Uses double buffering to prevent tearing. The back buffer is where

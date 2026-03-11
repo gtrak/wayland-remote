@@ -117,9 +117,7 @@ impl ApplicationHandler for ViewerApp {
             winit::event::WindowEvent::CloseRequested => {
                 info!("Window closed, shutting down");
                 // Exit the event loop
-                if let Some(display_window) = &self.display_window {
-                    display_window.window().close();
-                }
+                _event_loop.exit();
             }
             winit::event::WindowEvent::RedrawRequested => {
                 // Render the current frame
