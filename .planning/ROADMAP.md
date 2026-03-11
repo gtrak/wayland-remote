@@ -119,7 +119,7 @@ Plans:** 3 plans created
 **Plans:** 3 plans created
 
 **Plan List:**
-- [ ] 05-01-PLAN.md — TCP client foundation (network module, protocol parser, async client)
+- [x] 05-01-PLAN.md — TCP client foundation (network module, protocol parser, async client) — Complete 2026-03-11
 - [ ] 05-02-PLAN.md — Window display with GDI rendering (winit + GDI StretchDIBits)
 - [ ] 05-03-PLAN.md — Integration (main entry, channel wiring, end-to-end flow)
 
