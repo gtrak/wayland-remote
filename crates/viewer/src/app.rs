@@ -281,6 +281,7 @@ pub fn run(server_address: impl Into<String>) -> Result<(), Box<dyn std::error::
 
     info!("Application exited");
     Ok(())
+}
 
 #[cfg(test)]
 mod tests {
