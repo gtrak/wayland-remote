@@ -5,16 +5,41 @@
 //! color conversion and top-down bitmap format.
 
 use std::ptr;
-use std::sync::Mutex;
 
-use winapi::shared::minwindef::{DWORD, FALSE};
-use winapi::shared::windef::{BITMAPINFO, BITMAPINFOHEADER, HDC, HBITMAP, RECT};
+use winapi::shared::minwindef::DWORD;
+use winapi::shared::windef::{BITMAPINFO, BITMAPINFOHEADER, HDC, HBITMAP};
 use winapi::um::wingdi::{
-    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, GetDIBits,
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC,
     ReleaseDC, SelectObject, StretchDIBits, SRCCOPY, DIB_RGB_COLORS,
 };
 
 use crate::network::Frame;
+
+/// Error type for GDI operations
+#[derive(Debug)]
+pub enum GdiError {
+    GetDcFailed,
+    CreateDibSectionFailed,
+}
+
+impl std::fmt::Display for GdiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GdiError::GetDcFailed => write!(f, "Failed to get device context"),
+            GdiError::CreateDibSectionFailed => write!(f, "Failed to create DIB section"),
+        }
+    }
+}
+
+impl std::error::Error for GdiError {}
+
+/// Buffer containing bitmap handle and pixel data pointer
+struct Buffer {
+    /// Handle to the bitmap
+    bitmap: HBITMAP,
+    /// Pointer to pixel data (for StretchDIBits)
+    bits_ptr: *mut winapi::ctypes::c_void,
+}
 
 /// GDI renderer for displaying RGBA frames
 ///
@@ -22,9 +47,9 @@ use crate::network::Frame;
 /// frames are submitted, and the front buffer is what's currently displayed.
 pub struct GdiRenderer {
     /// Front buffer bitmap (currently displayed)
-    front_buffer: Option<HBITMAP>,
+    front_buffer: Option<Buffer>,
     /// Back buffer bitmap (next frame to display)
-    back_buffer: Option<HBITMAP>,
+    back_buffer: Option<Buffer>,
     /// Current frame dimensions
     width: u32,
     height: u32,
@@ -56,16 +81,23 @@ impl GdiRenderer {
         let bgra_data = self.convert_rgba_to_bgra(&frame.data, width as usize, height as usize);
 
         // Create DIB with the converted data
-        let bitmap = self.create_dib(width, height, &bgra_data);
+        let buffer = match self.create_dib(width, height, &bgra_data) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("Failed to create DIB: {}", e);
+                return;
+            }
+        };
 
-        // Swap buffers: old front becomes back (will be deleted), back becomes front
+        // Clean up old front buffer
         if let Some(old_front) = self.front_buffer.take() {
             unsafe {
-                DeleteObject(old_front);
+                DeleteObject(old_front.bitmap);
             }
         }
-        self.front_buffer = self.back_buffer.take();
-        self.back_buffer = Some(bitmap);
+
+        // Put new frame directly in front buffer (fixes first frame rendering)
+        self.front_buffer = Some(buffer);
 
         // Update dimensions
         self.width = frame.header.width;
@@ -112,8 +144,8 @@ impl GdiRenderer {
     /// * `data` - Pixel data in BGRA format
     ///
     /// # Returns
-    /// Handle to the created bitmap
-    fn create_dib(&self, width: i32, height: i32, data: &[u8]) -> HBITMAP {
+    /// Result containing the buffer with bitmap handle and bits pointer
+    fn create_dib(&self, width: i32, height: i32, data: &[u8]) -> Result<Buffer, GdiError> {
         unsafe {
             // Create BITMAPINFOHEADER for 32-bit bitmap
             // Negative height creates top-down DIB
@@ -142,7 +174,7 @@ impl GdiRenderer {
             // Get DC from null window to create DIB section
             let hdc = GetDC(ptr::null_mut());
             if hdc.is_null() {
-                panic!("Failed to get DC");
+                return Err(GdiError::GetDcFailed);
             }
 
             // Create DIB section
@@ -159,7 +191,7 @@ impl GdiRenderer {
             ReleaseDC(ptr::null_mut(), hdc);
 
             if hbitmap.is_null() {
-                panic!("Failed to create DIB section");
+                return Err(GdiError::CreateDibSectionFailed);
             }
 
             // Copy our pixel data into the DIB section
@@ -167,7 +199,10 @@ impl GdiRenderer {
                 ptr::copy_nonoverlapping(data.as_ptr(), bits_ptr as *mut u8, data.len());
             }
 
-            hbitmap
+            Ok(Buffer {
+                bitmap: hbitmap,
+                bits_ptr,
+            })
         }
     }
 
@@ -178,26 +213,50 @@ impl GdiRenderer {
     /// * `dest_width` - Destination width in pixels
     /// * `dest_height` - Destination height in pixels
     pub fn render(&self, hdc: HDC, dest_width: i32, dest_height: i32) {
-        if let Some(bitmap) = self.front_buffer {
+        if let Some(buffer) = &self.front_buffer {
             unsafe {
                 // Create compatible DC for the bitmap
                 let hdc_mem = CreateCompatibleDC(hdc);
                 if !hdc_mem.is_null() {
-                    let old_bitmap = SelectObject(hdc_mem, bitmap as _);
+                    let old_bitmap = SelectObject(hdc_mem, buffer.bitmap as _);
 
-                    // Use StretchDIBits to render with proper scaling
+                    // Calculate destination rectangle preserving aspect ratio
+                    let (src_width, src_height) = (self.width as i32, self.height as i32);
+                    let (dst_width, dst_height) = (dest_width, dest_height);
+                    
+                    // Calculate aspect ratios
+                    let src_aspect = src_width as f32 / src_height as f32;
+                    let dst_aspect = dst_width as f32 / dst_height as f32;
+                    
+                    let (final_width, final_height, final_x, final_y) = if src_aspect > dst_aspect {
+                        // Source is wider - fit to width, add letterbox top/bottom
+                        let new_height = (dst_width as f32 / src_aspect) as i32;
+                        let offset_y = (dst_height - new_height) / 2;
+                        (dst_width, new_height, 0, offset_y)
+                    } else {
+                        // Source is taller - fit to height, add pillarbox left/right
+                        let new_width = (dst_height as f32 * src_aspect) as i32;
+                        let offset_x = (dst_width - new_width) / 2;
+                        (new_width, dst_height, offset_x, 0)
+                    };
+
+                    // Fill background with black (for letterboxing)
+                    // Note: In a real implementation, we'd use ExtTextOut or similar
+                    // For now, we just render centered
+                    
+                    // Use StretchDIBits to render with proper scaling and aspect ratio
                     let _ = StretchDIBits(
                         hdc,
+                        final_x,
+                        final_y,
+                        final_width,
+                        final_height,
                         0,
                         0,
-                        dest_width,
-                        dest_height,
-                        0,
-                        0,
-                        self.width as u32,
-                        self.height as u32,
-                        ptr::null(),
-                        &bitmap as *const _ as *const _,
+                        src_width as u32,
+                        src_height as u32,
+                        buffer.bits_ptr,
+                        &bmi as *const _ as *const _,
                         0,
                         SRCCOPY,
                     );
@@ -226,14 +285,14 @@ impl Drop for GdiRenderer {
     fn drop(&mut self) {
         // Clean up GDI objects
         unsafe {
-            if let Some(bitmap) = self.front_buffer {
-                if !bitmap.is_null() {
-                    DeleteObject(bitmap);
+            if let Some(buffer) = self.front_buffer.take() {
+                if !buffer.bitmap.is_null() {
+                    DeleteObject(buffer.bitmap);
                 }
             }
-            if let Some(bitmap) = self.back_buffer {
-                if !bitmap.is_null() {
-                    DeleteObject(bitmap);
+            if let Some(buffer) = self.back_buffer.take() {
+                if !buffer.bitmap.is_null() {
+                    DeleteObject(buffer.bitmap);
                 }
             }
         }
@@ -284,17 +343,18 @@ mod tests {
     fn test_frame_submission_updates_dimensions() {
         let mut renderer = GdiRenderer::new();
         
+        // Use minimal frame for testing
         let frame = Frame {
             header: crate::network::FrameHeader {
                 window_id: 1,
-                width: 800,
-                height: 600,
+                width: 2,
+                height: 2,
                 timestamp: 1234567890,
             },
-            data: vec![0u8; 800 * 600 * 4],
+            data: vec![0u8; 2 * 2 * 4],
         };
         
         renderer.submit_frame(&frame);
-        assert_eq!(renderer.dimensions(), (800, 600));
+        assert_eq!(renderer.dimensions(), (2, 2));
     }
 }

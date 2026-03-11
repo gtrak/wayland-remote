@@ -26,8 +26,6 @@ pub struct DisplayWindow {
     window: Window,
     /// GDI renderer for frame display
     renderer: GdiRenderer,
-    /// Whether a redraw has been requested
-    redraw_requested: bool,
 }
 
 impl DisplayWindow {
@@ -56,7 +54,6 @@ impl DisplayWindow {
         Self {
             window,
             renderer: GdiRenderer::new(),
-            redraw_requested: false,
         }
     }
 
@@ -68,6 +65,14 @@ impl DisplayWindow {
     /// # Arguments
     /// * `frame` - The frame to display
     pub fn submit_frame(&mut self, frame: &Frame) {
+        // Resize window to match frame dimensions if different
+        let current_size = self.window.inner_size();
+        let new_size = PhysicalSize::new(frame.header.width, frame.header.height);
+        
+        if current_size.width != new_size.width || current_size.height != new_size.height {
+            self.window.set_inner_size(new_size);
+        }
+
         // Submit frame to renderer
         self.renderer.submit_frame(frame);
 
@@ -109,17 +114,5 @@ impl DisplayWindow {
     /// Get the renderer's current dimensions (last submitted frame)
     pub fn frame_dimensions(&self) -> (u32, u32) {
         self.renderer.dimensions()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_display_window_compiles() {
-        // This test just verifies the struct compiles correctly
-        // We can't actually create a window in tests without an event loop
-        assert!(true);
     }
 }
