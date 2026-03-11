@@ -13,6 +13,7 @@
 //! within the calloop event loop used for Wayland protocol handling.
 
 pub mod protocol;
+pub mod client;
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -187,8 +188,9 @@ pub async fn start_streaming_server(server: &StreamingServer) -> anyhow::Result<
                 let state = server.state.clone();
                 
                 // Spawn task for handling this client
+                // Spawn task for handling this client
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(socket, addr, state).await {
+                    if let Err(e) = client::handle_client(socket, addr, state).await {
                         warn!("Client {} error: {}", addr, e);
                     }
                 });
@@ -198,39 +200,6 @@ pub async fn start_streaming_server(server: &StreamingServer) -> anyhow::Result<
             }
         }
     }
-}
-
-/// Handle a single client connection
-///
-/// This is a placeholder for the per-client handler that will be
-/// implemented in Plan 02 (actual frame sending).
-///
-/// # Arguments
-/// * `socket` - The TCP socket for the client
-/// * `addr` - Client address
-/// * `state` - Shared streaming state
-async fn handle_client(
-    _socket: tokio::net::TcpStream,
-    addr: SocketAddr,
-    state: Arc<RwLock<StreamingState>>,
-) -> anyhow::Result<()> {
-    use tracing::info;
-
-    // Register client
-    let handle = ClientHandle::new(addr);
-    state.write().await.register_client(addr, handle.clone()).await;
-
-    info!("Client {} registered ({} clients total)", 
-          addr, state.read().await.client_count().await);
-
-    // TODO: Implement frame sending logic in Plan 02
-    // For now, just wait for socket to close
-    
-    // Cleanup on disconnect
-    state.write().await.unregister_client(addr).await;
-    info!("Client {} disconnected", addr);
-
-    Ok(())
 }
 
 #[cfg(test)]
