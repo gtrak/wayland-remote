@@ -69,7 +69,7 @@ Each task was committed atomically:
    - TCP accept loop spawns handler task per connection
    - Clones Arc<StreamingState> for each client
 
-**Plan metadata:** (pending)
+**Plan metadata:** `27cadfa` (docs: complete plan)
 
 ## Files Created/Modified
 
@@ -106,3 +106,11 @@ None - no external service configuration required.
 ---
 *Phase: 04-tcp-frame-streaming*
 *Completed: 2026-03-11*
+
+## Self-Check: PASSED
+
+- ✓ SUMMARY.md exists
+- ✓ client.rs exists
+- ✓ Task 1 commit exists (112d84a)
+- ✓ Task 2 commit exists (e1feaff)
+- ✓ Metadata commit exists (27cadfa)
