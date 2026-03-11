@@ -154,9 +154,12 @@ impl ApplicationHandler for ViewerApp {
                     window.on_paint();
                 }
             }
-            winit::event::WindowEvent::Resized(size) => {
+winit::event::WindowEvent::Resized(size) => {
                 debug!(compositor_window_id, width = size.width, height = size.height, "Window resized");
-                // Window will automatically redraw on resize
+                // Route resize event to the correct window
+                if let Some(window) = self.window_manager.get_window_mut(compositor_window_id) {
+                    window.handle_resize(size.width, size.height);
+                }
             }
             _ => {
                 // Ignore other events for now

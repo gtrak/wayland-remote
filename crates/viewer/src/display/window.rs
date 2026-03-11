@@ -142,4 +142,22 @@ impl DisplayWindow {
     pub fn frame_dimensions(&self) -> (u32, u32) {
         self.renderer.dimensions()
     }
+
+    /// Handle window resize event
+    ///
+    /// This method is called when the window is resized by the user.
+    /// The window will automatically redraw, and the renderer will scale
+    /// the frame to fit the new dimensions while preserving aspect ratio.
+    ///
+    /// # Arguments
+    /// * `width` - New window width in pixels
+    /// * `height` - New window height in pixels
+    pub fn handle_resize(&self, _width: u32, _height: u32) {
+        // The renderer automatically handles aspect ratio preservation
+        // via StretchDIBits in the render() method.
+        // Just request a redraw to update the display.
+        self.window.request_redraw();
+    }
+}
+
 }
