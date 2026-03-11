@@ -14,6 +14,7 @@
 
 pub mod protocol;
 pub mod client;
+pub mod surface;
 
 use std::sync::Arc;
 use std::collections::HashMap;
