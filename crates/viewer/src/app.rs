@@ -98,7 +98,7 @@ impl ViewerApp {
                     event_loop,
                 );
                 
-                info!(window_id = frame.header.window_id, "Window created or retrieved for frame");
+                debug!(window_id = frame.header.window_id, "Frame submitted to window");
                 window.submit_frame(&frame);
             }
         }
@@ -108,7 +108,7 @@ impl ViewerApp {
 impl ApplicationHandler for ViewerApp {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
         // Window creation is now lazy - happens in process_frames() when first frame arrives
-        // This method is kept for ApplicationHandler compliance but does nothing
+        // This method is kept for ApplicationHandler compliance and logs debug message
         debug!("Application resumed, windows will be created lazily on first frame");
     }
 
@@ -128,7 +128,7 @@ impl ApplicationHandler for ViewerApp {
         event: winit::event::WindowEvent,
     ) {
         // Use reverse mapping to get window_id from winit WindowId
-        let window_id = match self.window_manager.get_window_id(window_id) {
+        let compositor_window_id = match self.window_manager.get_window_id(window_id) {
             Some(id) => id,
             None => {
                 warn!("Event received for unknown window: {:?}", window_id);
@@ -138,9 +138,9 @@ impl ApplicationHandler for ViewerApp {
         
         match event {
             winit::event::WindowEvent::CloseRequested => {
-                info!(window_id, "Window closed, removing from manager");
+                info!(compositor_window_id, "Window closed, removing from manager");
                 // Remove the window from the manager
-                self.window_manager.remove_window(window_id);
+                self.window_manager.remove_window(compositor_window_id);
                 
                 // Exit if no more windows
                 if self.window_manager.is_empty() {
@@ -150,12 +150,12 @@ impl ApplicationHandler for ViewerApp {
             }
             winit::event::WindowEvent::RedrawRequested => {
                 // Render the current frame for this window
-                if let Some(window) = self.window_manager.get_window(window_id) {
+                if let Some(window) = self.window_manager.get_window(compositor_window_id) {
                     window.on_paint();
                 }
             }
             winit::event::WindowEvent::Resized(size) => {
-                debug!(window_id, width = size.width, height = size.height, "Window resized");
+                debug!(compositor_window_id, width = size.width, height = size.height, "Window resized");
                 // Window will automatically redraw on resize
             }
             _ => {
