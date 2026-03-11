@@ -136,7 +136,13 @@ Plans:** 3 plans created
   2. Surface creation/destroy properly manages HWND lifecycle
   3. Window resizes handled (frame scaling via StretchDIBits)
   4. Multiple windows visible simultaneously with correct content
-**Plans:** TBD
+**Plans:** 4 plans created
+
+**Plan List:**
+- [ ] 06-01-PLAN.md — WindowManager core with bidirectional HashMaps
+- [ ] 06-02-PLAN.md — ViewerApp multi-window integration
+- [ ] 06-03-PLAN.md — Window resize handling with aspect ratio preservation
+- [ ] 06-04-PLAN.md — Window lifecycle management (close, cleanup, exit)
 
 ### Phase 7: XDG Shell Window Management
 **Provenance:** [A] — Authoritative-driven
