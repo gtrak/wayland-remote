@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use tracing::info;
+
 #[cfg(windows)]
 use winit::event_loop::ActiveEventLoop;
 #[cfg(windows)]
@@ -70,10 +72,20 @@ impl WindowManager {
             // Store reverse mapping for event routing
             let winit_id = window.window().id();
             self.window_id_map.insert(winit_id, window_id);
-            
+
             // Increment cascade offset for next window (30px, wrap at 300px)
             self.cascade_offset = self.cascade_offset.wrapping_add(30);
-            
+
+            // Log window creation
+            info!(
+                window_id,
+                width,
+                height,
+                position_x = x,
+                position_y = y,
+                "Window created"
+            );
+
             window
         })
     }
@@ -128,6 +140,10 @@ impl WindowManager {
             // Remove the reverse mapping
             let winit_id = window.window().id();
             self.window_id_map.remove(&winit_id);
+
+            // Log window closure
+            info!(window_id, "Window removed");
+
             Some(window)
         } else {
             None
@@ -192,7 +208,6 @@ mod tests {
         // Verify that valid window IDs (1 and above) pass the assertion
         let window_id: u32 = 1;
         assert!(window_id > 0, "Window ID must be greater than 0");
-        
 
         let window_id: u32 = 100;
         assert!(window_id > 0, "Window ID must be greater than 0");
@@ -211,22 +226,18 @@ mod tests {
     fn test_cascade_offset_increment_pattern() {
         // Verify the cascade offset increment pattern (30px per window)
         let mut offset: u32 = 0;
-        
 
         // First window at (0, 0)
         assert_eq!(offset, 0);
         offset = offset.wrapping_add(30);
-        
 
         // Second window at (30, 30)
         assert_eq!(offset, 30);
         offset = offset.wrapping_add(30);
-        
 
         // Third window at (60, 60)
         assert_eq!(offset, 60);
         offset = offset.wrapping_add(30);
-        
 
         // Fourth window at (90, 90)
         assert_eq!(offset, 90);
@@ -236,14 +247,38 @@ mod tests {
     fn test_window_manager_struct_fields() {
         // Verify the WindowManager has the expected structure
         let wm = WindowManager::new();
-        
 
         // Both HashMaps should be empty initially
         assert!(wm.is_empty());
         assert_eq!(wm.window_count(), 0);
-        
 
         // The struct has three fields: windows, window_id_map, and cascade_offset
         // We can verify this indirectly through the public methods
+    }
+
+    #[test]
+    fn test_window_lifecycle_is_empty_and_remove() {
+        // Test the lifecycle: create -> close -> verify removed -> verify is_empty()
+        // Note: This test verifies the is_empty() and remove_window() methods
+        // without requiring an actual winit event loop.
+        let mut wm = WindowManager::new();
+        
+        // Initially empty
+        assert!(wm.is_empty());
+        assert_eq!(wm.window_count(), 0);
+        
+        // We cannot create actual windows without an event loop, but we can
+        // verify that remove_window returns None for non-existent windows
+        // and that is_empty() remains true
+        let removed = wm.remove_window(1);
+        assert!(removed.is_none());
+        assert!(wm.is_empty());
+        assert_eq!(wm.window_count(), 0);
+        
+        // Test with multiple window IDs
+        for window_id in 1..=5 {
+            assert!(wm.remove_window(window_id).is_none());
+            assert!(wm.is_empty());
+        }
     }
 }
