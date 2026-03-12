@@ -20,10 +20,7 @@ Users can run Linux GUI applications remotely and interact with them as native w
 - [x] **PROJ-006:** TCP frame streaming server
 - [x] **PROJ-007:** Windows viewer application displaying received frames
 - [x] **PROJ-008:** Window management (xdg-shell support, surface-to-HWND mapping)
-
-### Active
-
-- [ ] Bidirectional input (keyboard, mouse, scroll)
+- [x] **REQ-INPUT-001:** Bidirectional input protocol (keyboard, mouse, scroll)
 
 ### Out of Scope
 
@@ -63,15 +60,15 @@ Users can run Linux GUI applications remotely and interact with them as native w
 
 ## Milestone Progress
 
-- **M001: Migration** (in progress)
-  - ✅ S01: Project Foundation (completed 2026-03-12)
-  - ✅ S02: Wayland Core Protocol (completed 2026-03-12)
+- ✅ **M001: Migration** (completed 2026-03-12)
+  - ✅ S01: Project Foundation
+  - ✅ S02: Wayland Core Protocol
   - ✅ S03: Headless Rendering
   - ✅ S04: Tcp Frame Streaming
   - ✅ S05: Windows Viewer Foundation
   - ✅ S06: Surface To Hwnd Mapping
-  - ✅ S07: XDG Shell Window Management (completed 2026-03-12)
-  - 🔄 S08: Bidirectional Input (next)
+  - ✅ S07: XDG Shell Window Management
+  - ✅ S08: Bidirectional Input
 
 ---
-*Last updated: 2026-03-12 after S07 completion*
+*Last updated: 2026-03-12 after M001 completion*
