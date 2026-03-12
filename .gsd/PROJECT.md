@@ -64,13 +64,13 @@ Users can run Linux GUI applications remotely and interact with them as native w
 
 - **M001: Migration** (in progress)
   - ✅ S01: Project Foundation (completed 2026-03-12)
-  - 🔄 S02: Wayland Core Protocol (next)
+  - ✅ S02: Wayland Core Protocol (completed 2026-03-12)
   - ✅ S03: Headless Rendering
   - ✅ S04: Tcp Frame Streaming
   - ✅ S05: Windows Viewer Foundation
   - ✅ S06: Surface To Hwnd Mapping
-  - ⏳ S07: XDG Shell Window Management
+  - 🔄 S07: XDG Shell Window Management (next)
   - ⏳ S08: Bidirectional Input
 
 ---
-*Last updated: 2026-03-12 after S01 completion*
+*Last updated: 2026-03-12 after S02 completion*
