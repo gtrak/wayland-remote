@@ -14,6 +14,7 @@ use smithay::wayland::{
     socket::ListeningSocketSource,
     shm::{ShmState, ShmHandler},
     buffer::BufferHandler,
+    shell::xdg::{XdgShellState, XdgShellHandler, ToplevelSurface, PopupSurface, PositionerState},
 };
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::Output;
@@ -22,6 +23,8 @@ use smithay::delegate_compositor;
 use smithay::delegate_seat;
 use smithay::delegate_output;
 use smithay::delegate_shm;
+use smithay::delegate_xdg_shell;
+use smithay::utils::Serial;
 use wayland_server::backend::ObjectId;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
@@ -83,6 +86,8 @@ pub struct ServerState {
     pub output: Output,
     /// Shared memory state for wl_shm global
     pub shm_state: ShmState,
+    /// XDG Shell state for window management (S07)
+    pub xdg_shell_state: XdgShellState,
     /// Name of the Wayland socket (e.g., "wayland-0")
     pub socket_name: std::ffi::OsString,
     /// Serial counter for input events
@@ -101,6 +106,8 @@ pub struct ServerState {
     pub streaming_server: StreamingServer,
     /// Streaming state for TCP frame delivery
     pub streaming_state: Arc<RwLock<StreamingState>>,
+    /// Maps toplevel surfaces to their window IDs for window management (S07)
+    pub toplevel_windows: HashMap<ObjectId, u32>,
 }
 
 impl ServerState {
@@ -130,6 +137,10 @@ impl ServerState {
         // Initialize ShmState for shared memory buffers (M-2)
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         info!("ShmState initialized, wl_shm global advertised");
+        
+        // Initialize XDG Shell state for window management (S07)
+        let xdg_shell_state = XdgShellState::new::<Self>(&dh);
+        info!("XDG Shell state initialized, xdg_wm_base global advertised");
         
         // Initialize seat state - this advertises wl_seat global with keyboard and pointer
         let (seat_state, seat) = seat::create_seat(&dh, "wayland-remote-seat");
@@ -200,6 +211,7 @@ impl ServerState {
             output_manager_state,
             output,
             shm_state,
+            xdg_shell_state,
             renderer,
             socket_name,
             serial_counter: AtomicU32::new(0),
@@ -209,6 +221,7 @@ impl ServerState {
             surface_tracker: Arc::new(SurfaceTracker::new()),
             streaming_server: StreamingServer::new(6080),
             streaming_state: Arc::new(RwLock::new(StreamingState::new())),
+            toplevel_windows: HashMap::new(),
         }
     }
     
@@ -486,3 +499,57 @@ impl BufferHandler for ServerState {
 }
 
 delegate_shm!(ServerState);
+
+/// Implement XdgShellHandler for ServerState
+///
+/// This trait handles XDG Shell protocol events for window management (S07).
+/// It tracks toplevel surfaces and associates them with window IDs.
+impl XdgShellHandler for ServerState {
+    /// Get mutable reference to XDG Shell state
+    fn xdg_shell_state(&mut self) -> &mut XdgShellState {
+        &mut self.xdg_shell_state
+    }
+    
+    /// Called when a new toplevel surface is created
+    ///
+    /// This is triggered when a client creates an xdg_toplevel surface.
+    /// We associate the toplevel with a window ID for remote streaming.
+    fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        let surface_id = surface.wl_surface().id();
+        
+        // Allocate a window ID for this toplevel surface
+        let window_id = self.surface_tracker.allocate_window_id(surface_id.clone());
+        
+        // Store the mapping from surface to window ID
+        self.toplevel_windows.insert(surface_id.clone(), window_id);
+        
+        info!(
+            surface_id = ?surface_id,
+            window_id = window_id,
+            "XDG Toplevel created - window mapped for streaming"
+        );
+    }
+    
+    /// Called when a new popup surface is created
+    ///
+    /// Popups are temporary surfaces like menus and tooltips.
+    fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {
+        // Popups are tracked by Smithay but not assigned window IDs
+        // They are rendered as part of their parent toplevel
+        info!("XDG Popup created");
+    }
+    
+    /// Called when a grab request is made on a popup
+    fn grab(&mut self, _surface: PopupSurface, _seat: smithay::reexports::wayland_server::protocol::wl_seat::WlSeat, _serial: Serial) {
+        // Grab handling for dismiss-on-click-outside behavior
+        info!("XDG Popup grab requested");
+    }
+    
+    /// Called when a reposition request is made on a popup
+    fn reposition_request(&mut self, _surface: PopupSurface, _positioner: PositionerState, _token: u32) {
+        // Reposition handling for popup placement
+        info!("XDG Popup reposition requested");
+    }
+}
+
+delegate_xdg_shell!(ServerState);

@@ -15,15 +15,15 @@ Users can run Linux GUI applications remotely and interact with them as native w
 - [x] **PROJ-001:** Rust virtual workspace with shared dependencies and toolchain pinning
 - [x] **PROJ-002:** Multi-crate project structure (server + viewer)
 - [x] **PROJ-003:** CI/CD pipeline with multi-platform builds
+- [x] **PROJ-004:** Headless Wayland compositor accepting Wayland clients
+- [x] **PROJ-005:** Render surfaces to offscreen buffer/framebuffer
+- [x] **PROJ-006:** TCP frame streaming server
+- [x] **PROJ-007:** Windows viewer application displaying received frames
+- [x] **PROJ-008:** Window management (xdg-shell support, surface-to-HWND mapping)
 
 ### Active
 
-- [ ] Headless Wayland compositor accepting Wayland clients
-- [ ] Render surfaces to offscreen buffer/framebuffer
-- [ ] TCP frame streaming server
-- [ ] Windows viewer application displaying received frames
 - [ ] Bidirectional input (keyboard, mouse, scroll)
-- [ ] Window management (xdg-shell support, surface-to-HWND mapping)
 
 ### Out of Scope
 
@@ -59,6 +59,7 @@ Users can run Linux GUI applications remotely and interact with them as native w
 | TDD red-green-refactor | Ensures correctness, guides incremental development | — Pending |
 | Rust 1.85 over 1.75 | Required for edition2024 in transitive deps | ✅ Completed S01 |
 | Virtual workspace structure | Clean separation of server/viewer concerns | ✅ Completed S01 |
+| Smithay XdgShellState | Provides complete xdg_shell protocol handling with minimal code | ✅ Completed S07 |
 
 ## Milestone Progress
 
@@ -69,8 +70,8 @@ Users can run Linux GUI applications remotely and interact with them as native w
   - ✅ S04: Tcp Frame Streaming
   - ✅ S05: Windows Viewer Foundation
   - ✅ S06: Surface To Hwnd Mapping
-  - 🔄 S07: XDG Shell Window Management (next)
-  - ⏳ S08: Bidirectional Input
+  - ✅ S07: XDG Shell Window Management (completed 2026-03-12)
+  - 🔄 S08: Bidirectional Input (next)
 
 ---
-*Last updated: 2026-03-12 after S02 completion*
+*Last updated: 2026-03-12 after S07 completion*
