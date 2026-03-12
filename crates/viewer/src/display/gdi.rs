@@ -7,10 +7,10 @@
 use std::ptr;
 
 use winapi::shared::minwindef::DWORD;
-use winapi::shared::windef::{BITMAPINFO, BITMAPINFOHEADER, HDC, HBITMAP};
+use winapi::shared::windef::{BITMAPINFO, BITMAPINFOHEADER, HBITMAP, HDC};
 use winapi::um::wingdi::{
-    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC,
-    ReleaseDC, SelectObject, StretchDIBits, SRCCOPY, DIB_RGB_COLORS,
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC, SelectObject,
+    StretchDIBits, DIB_RGB_COLORS, SRCCOPY,
 };
 
 use crate::network::Frame;
@@ -48,7 +48,6 @@ struct Buffer {
 // to share across threads simultaneously (not Sync) because GDI operations
 // are not thread-safe. The bits_ptr is only accessed through the owning thread.
 unsafe impl Send for Buffer {}
-
 
 /// GDI renderer for displaying RGBA frames
 ///
@@ -94,7 +93,10 @@ impl GdiRenderer {
             Ok(b) => b,
             Err(e) => {
                 // Log frame submission failure with tracing for visibility
-                eprintln!("ERROR: Failed to create DIB for frame {}: {}", frame.header.window_id, e);
+                eprintln!(
+                    "ERROR: Failed to create DIB for frame {}: {}",
+                    frame.header.window_id, e
+                );
                 // Note: Frame is silently dropped when GDI resources cannot be allocated
                 return;
             }
@@ -138,7 +140,7 @@ impl GdiRenderer {
             // BGRA: [B, G, R, A]
             bgra_data.push(rgba_data[offset + 2]); // B
             bgra_data.push(rgba_data[offset + 1]); // G
-            bgra_data.push(rgba_data[offset]);     // R
+            bgra_data.push(rgba_data[offset]); // R
             bgra_data.push(rgba_data[offset + 3]); // A
         }
 
@@ -166,9 +168,9 @@ impl GdiRenderer {
                     biWidth: width,
                     biHeight: -height, // Negative for top-down DIB
                     biPlanes: 1,
-                    biBitCount: 32,    // 32 bits per pixel
-                    biCompression: 0,  // BI_RGB (no compression)
-                    biSizeImage: 0,    // Can be 0 for BI_RGB
+                    biBitCount: 32,   // 32 bits per pixel
+                    biCompression: 0, // BI_RGB (no compression)
+                    biSizeImage: 0,   // Can be 0 for BI_RGB
                     biXPelsPerMeter: 0,
                     biYPelsPerMeter: 0,
                     biClrUsed: 0,
@@ -190,14 +192,7 @@ impl GdiRenderer {
 
             // Create DIB section
             let mut bits_ptr: *mut winapi::ctypes::c_void = ptr::null_mut();
-            let hbitmap = CreateDIBSection(
-                hdc,
-                &mut bmi,
-                DIB_RGB_COLORS,
-                &mut bits_ptr,
-                0,
-                0,
-            );
+            let hbitmap = CreateDIBSection(hdc, &mut bmi, DIB_RGB_COLORS, &mut bits_ptr, 0, 0);
 
             ReleaseDC(ptr::null_mut(), hdc);
 
@@ -235,11 +230,11 @@ impl GdiRenderer {
                     // Calculate destination rectangle preserving aspect ratio
                     let (src_width, src_height) = (self.width as i32, self.height as i32);
                     let (dst_width, dst_height) = (dest_width, dest_height);
-                    
+
                     // Calculate aspect ratios
                     let src_aspect = src_width as f32 / src_height as f32;
                     let dst_aspect = dst_width as f32 / dst_height as f32;
-                    
+
                     let (final_width, final_height, final_x, final_y) = if src_aspect > dst_aspect {
                         // Source is wider - fit to width, add letterbox top/bottom
                         let new_height = (dst_width as f32 / src_aspect) as i32;
@@ -255,7 +250,7 @@ impl GdiRenderer {
                     // Fill background with black (for letterboxing)
                     // Note: In a real implementation, we'd use ExtTextOut or similar
                     // For now, we just render centered
-                    
+
                     // Use StretchDIBits to render with proper scaling and aspect ratio
                     let _ = StretchDIBits(
                         hdc,
@@ -324,11 +319,11 @@ mod tests {
     #[test]
     fn test_rgba_to_bgra_conversion() {
         let renderer = GdiRenderer::new();
-        
+
         // Single pixel: RGBA = [255, 128, 64, 200] (red=255, green=128, blue=64, alpha=200)
         let rgba = vec![255, 128, 64, 200];
         let bgra = renderer.convert_rgba_to_bgra(&rgba, 1, 1);
-        
+
         // BGRA should be: [64, 128, 255, 200] (blue=64, green=128, red=255, alpha=200)
         assert_eq!(bgra, vec![64, 128, 255, 200]);
     }
@@ -336,25 +331,28 @@ mod tests {
     #[test]
     fn test_rgba_to_bgra_multiple_pixels() {
         let renderer = GdiRenderer::new();
-        
+
         // Two pixels
         let rgba = vec![
-            255, 0, 0, 255,   // Red
-            0, 255, 0, 255,   // Green
+            255, 0, 0, 255, // Red
+            0, 255, 0, 255, // Green
         ];
         let bgra = renderer.convert_rgba_to_bgra(&rgba, 2, 1);
-        
+
         // BGRA: Blue, Green, Red, Alpha
-        assert_eq!(bgra, vec![
-            0, 0, 255, 255,   // Red in BGRA
-            0, 255, 0, 255,   // Green in BGRA (same)
-        ]);
+        assert_eq!(
+            bgra,
+            vec![
+                0, 0, 255, 255, // Red in BGRA
+                0, 255, 0, 255, // Green in BGRA (same)
+            ]
+        );
     }
 
     #[test]
     fn test_frame_submission_updates_dimensions() {
         let mut renderer = GdiRenderer::new();
-        
+
         // Use minimal frame for testing
         let frame = Frame {
             header: crate::network::FrameHeader {
@@ -365,7 +363,7 @@ mod tests {
             },
             data: vec![0u8; 2 * 2 * 4],
         };
-        
+
         renderer.submit_frame(&frame);
         assert_eq!(renderer.dimensions(), (2, 2));
     }

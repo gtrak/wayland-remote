@@ -35,11 +35,11 @@ impl TcpClient {
     /// Handle to the spawned task that can be used to await completion
     pub async fn connect(&self) -> Result<TcpStream, NetworkError> {
         info!(address = %self.address, "Connecting to server");
-        
+
         let stream = TcpStream::connect(&self.address)
             .await
             .map_err(|e| NetworkError::Connection(format!("Failed to connect: {}", e)))?;
-        
+
         info!(address = %self.address, "Connected successfully");
         Ok(stream)
     }
@@ -69,15 +69,12 @@ impl TcpClient {
     ///
     /// # Returns
     /// Receiver end of the mpsc channel for receiving frames
-    pub async fn start_receiving(
-        stream: TcpStream,
-        buffer_size: usize,
-    ) -> mpsc::Receiver<Frame> {
+    pub async fn start_receiving(stream: TcpStream, buffer_size: usize) -> mpsc::Receiver<Frame> {
         let (tx, rx) = mpsc::channel(buffer_size);
-        
+
         tokio::spawn(async move {
             let mut stream = stream;
-            
+
             loop {
                 match read_frame_from_stream(&mut stream).await {
                     Ok(frame) => {
@@ -122,7 +119,7 @@ async fn read_frame_from_stream(stream: &mut TcpStream) -> Result<Frame, Network
 
     // Calculate payload size
     let payload_size = header.payload_size();
-    
+
     // Sanity check to prevent unreasonable allocations
     if payload_size > 100_000_000 {
         return Err(NetworkError::Protocol(format!(
@@ -171,7 +168,7 @@ mod tests {
         // Spawn server task that sends a frame
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            
+
             // Create test frame: window_id=1, 10x10 RGBA
             let header = FrameHeader {
                 window_id: 1,
@@ -179,10 +176,10 @@ mod tests {
                 height: 10,
                 timestamp: 1234567890,
             };
-            
+
             let header_bytes = header.encode();
             let payload = vec![0xFFu8; 10 * 10 * 4]; // Red pixels
-            
+
             stream.write_all(&header_bytes).await.unwrap();
             stream.write_all(&payload).await.unwrap();
         });
@@ -190,10 +187,10 @@ mod tests {
         // Connect client
         let client = TcpClient::new(addr.to_string());
         let mut stream = client.connect().await.unwrap();
-        
+
         // Read frame
         let frame = client.read_frame(&mut stream).await.unwrap();
-        
+
         assert_eq!(frame.header.window_id, 1);
         assert_eq!(frame.header.width, 10);
         assert_eq!(frame.header.height, 10);
@@ -215,7 +212,7 @@ mod tests {
 
         let client = TcpClient::new(addr.to_string());
         let mut stream = client.connect().await.unwrap();
-        
+
         let result = client.read_frame(&mut stream).await;
         assert!(result.is_err());
     }
@@ -228,14 +225,14 @@ mod tests {
         // Server sends complete header but incomplete payload
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            
+
             let header = FrameHeader {
                 window_id: 1,
                 width: 100,
                 height: 100,
                 timestamp: 0,
             };
-            
+
             stream.write_all(&header.encode()).await.unwrap();
             // Send only half the payload
             stream.write_all(&vec![0u8; 50 * 100 * 4]).await.unwrap();
@@ -243,7 +240,7 @@ mod tests {
 
         let client = TcpClient::new(addr.to_string());
         let mut stream = client.connect().await.unwrap();
-        
+
         let result = client.read_frame(&mut stream).await;
         assert!(result.is_err());
     }
@@ -252,7 +249,7 @@ mod tests {
     fn test_client_address_parsing() {
         let client = TcpClient::new("192.168.1.100:8080");
         assert_eq!(client.address, "192.168.1.100:8080");
-        
+
         let client2 = TcpClient::new("localhost:9000");
         assert_eq!(client2.address, "localhost:9000");
     }

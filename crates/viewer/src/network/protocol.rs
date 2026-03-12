@@ -48,8 +48,7 @@ impl FrameHeader {
             width: u32::from_be_bytes([data[4], data[5], data[6], data[7]]),
             height: u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
             timestamp: u64::from_be_bytes([
-                data[12], data[13], data[14], data[15],
-                data[16], data[17], data[18], data[19],
+                data[12], data[13], data[14], data[15], data[16], data[17], data[18], data[19],
             ]),
         })
     }
@@ -112,7 +111,7 @@ mod tests {
         data[12..20].copy_from_slice(&1234567890u64.to_be_bytes());
 
         let header = FrameHeader::decode(&data).unwrap();
-        
+
         assert_eq!(header.window_id, 1);
         assert_eq!(header.width, 1920);
         assert_eq!(header.height, 1080);
@@ -194,19 +193,19 @@ mod tests {
         };
 
         let encoded = header.encode();
-        
+
         // Check window_id bytes
         assert_eq!(encoded[0], 0x12);
         assert_eq!(encoded[1], 0x34);
         assert_eq!(encoded[2], 0x56);
         assert_eq!(encoded[3], 0x78);
-        
+
         // Check width bytes
         assert_eq!(encoded[4], 0x9A);
         assert_eq!(encoded[5], 0xBC);
         assert_eq!(encoded[6], 0xDE);
         assert_eq!(encoded[7], 0xF0);
-        
+
         // Check timestamp bytes
         assert_eq!(encoded[12], 0x11);
         assert_eq!(encoded[19], 0x88);

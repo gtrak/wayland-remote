@@ -24,10 +24,10 @@ pub use protocol::{Frame, FrameHeader};
 pub enum NetworkError {
     #[error("Connection error: {0}")]
     Connection(String),
-    
+
     #[error("Protocol error: {0}")]
     Protocol(String),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -39,7 +39,11 @@ mod tests {
     #[test]
     fn test_frame_header_wire_size() {
         // Wire format should be exactly 20 bytes: 4 + 4 + 4 + 8
-        assert_eq!(FrameHeader::SIZE, 20, "Wire format must be exactly 20 bytes");
+        assert_eq!(
+            FrameHeader::SIZE,
+            20,
+            "Wire format must be exactly 20 bytes"
+        );
     }
 
     #[test]
