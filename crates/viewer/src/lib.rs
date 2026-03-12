@@ -12,5 +12,11 @@ pub mod network;
 pub mod window_manager;
 
 #[cfg(windows)]
+pub mod input;
+
+#[cfg(windows)]
 pub use display::{DisplayWindow, GdiRenderer};
 pub use network::{Frame, FrameHeader, NetworkError, TcpClient};
+
+#[cfg(windows)]
+pub use input::{InputCapture, WindowInputEvent, ViewerInputEvent, encode_input_event};

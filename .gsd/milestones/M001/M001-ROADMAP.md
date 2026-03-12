@@ -21,5 +21,5 @@
   > After this: unit tests prove surface-to-hwnd-mapping works
 - [x] **S07: XDG Shell Window Management** `risk:medium` `depends:[S06]`
   > After this: unit tests prove XDG Shell Window Management works
-- [ ] **S08: Bidirectional Input** `risk:medium` `depends:[S07]`
+- [x] **S08: Bidirectional Input** `risk:medium` `depends:[S07]`
   > After this: unit tests prove Bidirectional Input works
