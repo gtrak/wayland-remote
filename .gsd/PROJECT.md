@@ -12,7 +12,9 @@ Users can run Linux GUI applications remotely and interact with them as native w
 
 ### Validated
 
-(None yet — ship to validate)
+- [x] **PROJ-001:** Rust virtual workspace with shared dependencies and toolchain pinning
+- [x] **PROJ-002:** Multi-crate project structure (server + viewer)
+- [x] **PROJ-003:** CI/CD pipeline with multi-platform builds
 
 ### Active
 
@@ -55,6 +57,20 @@ Users can run Linux GUI applications remotely and interact with them as native w
 | GDI over Direct3D/wgpu | Easiest path for MVP | — Pending |
 | Raw RGBA over H264 | Focus on getting it working first | — Pending |
 | TDD red-green-refactor | Ensures correctness, guides incremental development | — Pending |
+| Rust 1.85 over 1.75 | Required for edition2024 in transitive deps | ✅ Completed S01 |
+| Virtual workspace structure | Clean separation of server/viewer concerns | ✅ Completed S01 |
+
+## Milestone Progress
+
+- **M001: Migration** (in progress)
+  - ✅ S01: Project Foundation (completed 2026-03-12)
+  - 🔄 S02: Wayland Core Protocol (next)
+  - ✅ S03: Headless Rendering
+  - ✅ S04: Tcp Frame Streaming
+  - ✅ S05: Windows Viewer Foundation
+  - ✅ S06: Surface To Hwnd Mapping
+  - ⏳ S07: XDG Shell Window Management
+  - ⏳ S08: Bidirectional Input
 
 ---
-*Last updated: 2025-03-10 after initialization*
+*Last updated: 2026-03-12 after S01 completion*
