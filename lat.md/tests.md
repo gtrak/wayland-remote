@@ -49,3 +49,19 @@ Two concurrent test clients each commit a surface and the server reports a track
 ### Client disconnect cleans up
 
 After the client commits a surface and disconnects, the server removes it from its tracked-surface state and reports a count of 0.
+
+## Rendering
+
+Offscreen pixman rendering tests: the server renders committed client surfaces into a BGRA framebuffer and the test reads the pixels back over a render-request channel.
+
+### Renders client pattern
+
+A client commits a 64x64 surface filled with a known color; a render read-back matches that color exactly at the surface's layout origin, and the region just outside the surface is background black.
+
+### BGRA byte order
+
+Rendering a known opaque blue pixel yields the in-memory bytes `[B, G, R, A]` (not `[R, G, B, A]`) and a contiguous read-back stride of `width * 4`.
+
+### Handles surface resize
+
+After the client re-commits the same surface at a larger size, the next render read-back reflects the new dimensions: a pixel that was background black now matches the surface pattern, and the region beyond the new size is black.

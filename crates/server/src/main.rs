@@ -4,28 +4,34 @@
 //! `--width`/`--height`/`--socket`, runs the compositor, and exits on
 //! SIGINT/SIGTERM.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use wayland_remote_server::state::Config;
+
+const USAGE: &str = "usage: wayland-remote-server \
+    [--width N] [--height N] [--socket NAME] [--snapshot PATH]";
 
 fn parse_args() -> Config {
     let mut config = Config::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let value = match arg.as_str() {
-            "--width" | "--height" | "--socket" => args.next().unwrap_or_else(|| {
-                eprintln!("missing value for {arg}");
-                eprintln!("usage: wayland-remote-server [--width N] [--height N] [--socket NAME]");
-                std::process::exit(2);
-            }),
+            "--width" | "--height" | "--socket" | "--snapshot" => {
+                args.next().unwrap_or_else(|| {
+                    eprintln!("missing value for {arg}");
+                    eprintln!("{USAGE}");
+                    std::process::exit(2);
+                })
+            }
             "--help" | "-h" => {
-                println!("usage: wayland-remote-server [--width N] [--height N] [--socket NAME]");
+                println!("{USAGE}");
                 std::process::exit(0);
             }
             other => {
                 eprintln!("unknown argument: {other}");
-                eprintln!("usage: wayland-remote-server [--width N] [--height N] [--socket NAME]");
+                eprintln!("{USAGE}");
                 std::process::exit(2);
             }
         };
@@ -46,6 +52,9 @@ fn parse_args() -> Config {
             "--socket" => {
                 config.socket_name = Some(value);
             }
+            "--snapshot" => {
+                config.snapshot = Some(PathBuf::from(value));
+            }
             _ => unreachable!("matched above"),
         }
     }
@@ -55,7 +64,7 @@ fn parse_args() -> Config {
 fn main() {
     let config = parse_args();
     let shutdown = Arc::new(AtomicBool::new(false));
-    if let Err(err) = wayland_remote_server::run(config, shutdown, None) {
+    if let Err(err) = wayland_remote_server::run(config, shutdown, None, None) {
         eprintln!("wayland-remote-server error: {err}");
         std::process::exit(1);
     }

@@ -8,6 +8,7 @@ rust-version.workspace = true
 anyhow.workspace = true
 bytes.workspace = true
 calloop = { workspace = true, features = ["signals"] }
+image.workspace = true
 quinn.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
@@ -19,7 +20,6 @@ thiserror.workspace = true
 wayland-server.workspace = true
 
 [dev-dependencies]
-image.workspace = true
 tempfile.workspace = true
 wayland-client.workspace = true
 wayland-protocols.workspace = true

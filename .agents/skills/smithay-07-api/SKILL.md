@@ -540,3 +540,115 @@ calloop = { workspace = true, features = ["signals"] }
 ```
 
 No other dependency changes needed.
+
+## Offscreen Rendering with Pixman (Issue 04)
+
+Verified against docs.rs/smithay/0.7.0 — `smithay::backend::renderer::pixman`.
+
+### Key types
+
+- `PixmanRenderer` — the renderer. `PixmanRenderer::new() -> Result<Self, PixmanError>`.
+- `pixman::image::bits::Image<'static, 'static>` — an offscreen pixel buffer (from the `pixman` crate 0.2.1, re-exported via smithay). This is what you render into and read back from.
+- `PixmanTarget<'a>` — a framebuffer bound to a `PixmanRenderer`. Created by `Bind::bind(&mut renderer, &mut image)`.
+- `PixmanTexture` — a texture handle (the `TextureId` for PixmanRenderer). Created by importing a wl_shm buffer.
+- `PixmanFrame<'frame, 'buffer>` — the render context returned by `Renderer::render(...)`. Implements the `Frame` trait (check `smithay::backend::renderer::Frame` on docs.rs for exact method names — likely `render_texture` / `render_texture_at`).
+- `PixmanMapping` — a downloaded pixel buffer. Created by `ExportMem::copy_framebuffer(...)`.
+
+### Trait impls on PixmanRenderer (from docs.rs)
+
+- `Offscreen<Image<'static, 'static>>` — `create_buffer(format: DrmFourcc, size: Size<i32, BufferCoords>) -> Result<Image<'static, 'static>, PixmanError>`. Creates the offscreen pixel buffer.
+- `Bind<Image<'static, 'static>>` — `bind<'a>(&mut self, target: &'a mut Image<'static, 'static>) -> Result<PixmanTarget<'a>, PixmanError>`. Binds the image as a render target.
+- `ImportMemWl` — `import_shm_buffer(buffer: &WlBuffer, surface: Option<&SurfaceData>, damage: &[Rectangle<i32, BufferCoords>]) -> Result<PixmanTexture, PixmanError>`. Imports a wl_shm buffer as a texture.
+- `ImportAll` (blanket) — `import_buffer(buffer: &WlBuffer, surface: Option<&SurfaceData>, damage: &[Rectangle]) -> Option<Result<PixmanTexture, PixmanError>>`. Tries shm/egl/dma; for pixman without EGL, only shm works.
+- `Renderer` — `render<'frame, 'buffer>(&'frame mut self, target: &'frame mut PixmanTarget<'buffer>, output_size: Size<i32, Physical>, dst_transform: Transform) -> Result<PixmanFrame<'frame, 'buffer>, PixmanError>`. Begins a render pass.
+- `ExportMem` — `copy_framebuffer(&mut self, target: &PixmanTarget<'_>, region: Rectangle<i32, BufferCoords>, format: DrmFourcc) -> Result<PixmanMapping, PixmanError>` + `map_texture<'a>(&mut self, mapping: &'a PixmanMapping) -> Result<&'a [u8], PixmanError>`. Reads back pixels.
+
+### Render flow (the complete pipeline)
+
+```rust
+use smithay::backend::renderer::pixman::PixmanRenderer;
+use smithay::backend::renderer::{Renderer, Bind, Offscreen, ExportMem, ImportAll};
+use smithay::backend::allocator::Fourcc;
+use smithay::utils::{Transform, Rectangle, Size};
+
+// 1. Create renderer
+let mut renderer = PixmanRenderer::new()?;
+
+// 2. Create offscreen buffer (the framebuffer)
+let format = Fourcc::Argb8888; // BGRA in memory on little-endian
+let size: Size<i32, smithay::utils::Buffer> = (width as i32, height as i32).into();
+let mut image = renderer.create_buffer(format, size)?;
+
+// 3. Bind as render target
+let mut target = renderer.bind(&mut image)?;
+
+// 4. Begin render pass
+let output_size: Size<i32, smithay::utils::Physical> = (width as i32, height as i32).into();
+let mut frame = renderer.render(&mut target, output_size, Transform::Normal)?;
+
+// 5. Clear (render a full-screen opaque rect, or use frame's clear method)
+//    Check PixmanFrame/Frame trait for the exact method — likely:
+//    frame.clear([0.0, 0.0, 0.0, 1.0])?;  // or similar
+
+// 6. Import each surface's wl_shm buffer as a texture and render it
+//    In commit handler, store the WlBuffer; in render, import it:
+//    let texture = renderer.import_buffer(&buffer, Some(surface_data), &damage)?;
+//    if let Some(Ok(tex)) = texture {
+//        frame.render_texture_at(&tex, (x, y).into(), Transform::Normal, 1.0)?;
+//        // or render_texture with explicit src/dst rects — check Frame trait
+//    }
+//    NOTE: Check the exact Frame trait method signature on docs.rs.
+//    The method is likely `render_texture_at(&mut self, texture: &TextureId, pos: Point<i32, Physical>, transform: Transform, alpha: f32) -> Result<Rectangle<i32, Physical>, Error>`.
+
+// 7. Finish the frame (frame is consumed/dropped — check if there's an explicit end() or if Drop finalizes)
+
+// 8. Read back pixels
+let region = Rectangle::new((0, 0).into(), (width as i32, height as i32).into());
+let mapping = renderer.copy_framebuffer(&target, region, format)?;
+let pixels: &[u8] = renderer.map_texture(&mapping)?;
+// pixels is BGRA, stride may differ from width*4 — check the image/target size
+```
+
+### Getting the surface buffer in commit
+
+```rust
+use smithay::wayland::compositor::{with_states, SurfaceAttributes};
+
+// In CompositorHandler::commit:
+let buffer_info = with_states(surface, |states| {
+    let attrs = states.cached_state.get::<SurfaceAttributes>().current();
+    attrs.buffer.as_ref().map(|buf| {
+        // BufferAssignment::NewBuffer(WlBuffer) or similar
+        // Check the exact type — in 0.7 it's likely:
+        // attrs.buffer is Option<BufferAssignment>
+        // BufferAssignment::NewBuffer(buffer) => buffer.dimensions()
+    })
+});
+```
+
+NOTE: The exact `SurfaceAttributes` field types may differ in 0.7. Check the compiler. The key is: `attrs.buffer` gives you the committed `WlBuffer`, and `buffer.dimensions()` gives `(u32, u32)`.
+
+### BGRA byte order
+
+`Fourcc::Argb8888` on little-endian = BGRA in memory. This is what pixman produces and what GDI expects. A single pixel with value `0xFFAABBCC` (u32 LE) is stored as bytes `[CC, BB, AA, FF]` = `[B, G, R, A]`. Verify with a test: render `0xFF0000FF` (blue=0xFF, green=0x00, red=0x00, alpha=0xFF) → bytes should be `[FF, 00, 00, FF]` = `[B=255, G=0, R=0, A=255]`.
+
+### Stride
+
+The pixman Image may pad rows. The `PixmanTarget` implements `Texture` trait which has `width()` and `height()` but NOT stride. To get the real stride, either:
+1. Use `copy_framebuffer` (ExportMem) which returns a contiguous buffer — the stride is `width * 4` for Argb8888.
+2. Access the pixman Image directly (if the `pixman` crate exposes `stride()` on Image — check pixman 0.2.1 docs).
+
+For MVP, use `copy_framebuffer` + `map_texture` for readback — it handles stride for you and returns a contiguous `&[u8]` of `width * height * 4` bytes.
+
+### Cargo.toml: no changes needed
+
+The `renderer_pixman` feature is already enabled on the smithay dependency. The `pixman` crate is a transitive dependency of smithay — you do NOT need to add it directly. The `Image` type comes from smithay's re-export or the `pixman` crate directly; check if smithay re-exports it or if you need `pixman = "0.2.1"` as a direct dep. If the compiler can't find `pixman::image::bits::Image`, add `pixman = "0.2"` to `[workspace.dependencies]` and `crates/server/Cargo.toml`.
+
+### Key risk: Frame trait methods
+
+The exact method names on `PixmanFrame` (the render context) are the main unknown. Check `smithay::backend::renderer::Frame` trait on docs.rs/smithay/0.7.0. Common methods in smithay renderers:
+- `render_texture(&mut self, texture, src_rect, dst_rect, transform, alpha) -> Result<(), Error>`
+- `render_texture_at(&mut self, texture, pos, transform, alpha) -> Result<Rectangle, Error>`
+- `clear(&mut self, color: [f32; 4]) -> Result<(), Error>` (or via a Result-returning method)
+
+If the method names differ, adapt — the pattern is always "begin render → draw textures → implicit finish on drop → readback".

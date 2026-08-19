@@ -46,7 +46,7 @@ fn spawn_server() -> (
         ..Config::default()
     };
     let shutdown_flag = shutdown.clone();
-    let handle = thread::spawn(move || run(config, shutdown_flag, Some(status_tx)));
+    let handle = thread::spawn(move || run(config, shutdown_flag, Some(status_tx), None));
     let socket_path = runtime_dir().join(&socket_name);
 
     // The socket file is created synchronously at startup; wait for it.

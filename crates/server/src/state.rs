@@ -7,9 +7,10 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender};
 
 use smithay::backend::input::KeyState;
 use smithay::delegate_compositor;
@@ -41,6 +42,8 @@ use wayland_server::protocol::wl_buffer::WlBuffer;
 use wayland_server::protocol::wl_surface::WlSurface;
 use wayland_server::{Client, DisplayHandle, Resource};
 
+use crate::rendering::{FrameBuffer, OffscreenRenderer, RenderRequest};
+
 /// Configuration for the headless compositor.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -50,6 +53,9 @@ pub struct Config {
     pub height: u32,
     /// Socket name to bind (created under `$XDG_RUNTIME_DIR`); auto-named if `None`.
     pub socket_name: Option<String>,
+    /// If set, render once after the first client commits a surface, write the
+    /// frame as a PNG to this path, and exit.
+    pub snapshot: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -58,6 +64,7 @@ impl Default for Config {
             width: 1280,
             height: 720,
             socket_name: None,
+            snapshot: None,
         }
     }
 }
@@ -225,6 +232,22 @@ impl TouchTarget<State> for SurfaceFocus {
     }
 }
 
+/// Per-surface render information: the committed buffer and its layout
+/// position in the trivial tiling (0,0 / 20,20 / 40,40 … for M1).
+#[derive(Debug, Clone)]
+pub struct SurfaceInfo {
+    /// The committed buffer, if the surface currently has one attached.
+    pub buffer: Option<WlBuffer>,
+    /// Layout x position in the offscreen frame.
+    pub x: i32,
+    /// Layout y position in the offscreen frame.
+    pub y: i32,
+    /// Committed buffer width in pixels.
+    pub width: u32,
+    /// Committed buffer height in pixels.
+    pub height: u32,
+}
+
 /// All compositor state: globals, tracked surfaces, and shutdown plumbing.
 pub struct State {
     pub display_handle: DisplayHandle,
@@ -234,13 +257,19 @@ pub struct State {
     pub seat: Seat<State>,
     pub output: Output,
     pub output_manager_state: OutputManagerState,
-    /// Surfaces that have committed at least once, keyed by object id.
-    pub surfaces: HashMap<ObjectId, ()>,
+    /// Committed surfaces, keyed by object id, with buffer + layout position.
+    pub surfaces: HashMap<ObjectId, SurfaceInfo>,
+    /// Offscreen renderer, initialized after display setup.
+    pub renderer: Option<OffscreenRenderer>,
+    /// Test back-channel carrying render requests (None in production).
+    pub render_rx: Option<Receiver<RenderRequest>>,
     pub config: Config,
     /// Test back-channel reporting the current surface count.
     pub status_tx: Option<Sender<usize>>,
     /// Set by the signal source (or externally) to request shutdown.
     pub shutdown: Arc<AtomicBool>,
+    /// Tracks whether a `--snapshot` frame has been written (exactly once).
+    pub snapshot_done: bool,
 }
 
 impl State {
@@ -249,6 +278,7 @@ impl State {
         display_handle: DisplayHandle,
         config: Config,
         status_tx: Option<Sender<usize>>,
+        render_rx: Option<Receiver<RenderRequest>>,
         shutdown: Arc<AtomicBool>,
     ) -> anyhow::Result<Self> {
         let compositor_state = CompositorState::new::<State>(&display_handle);
@@ -291,9 +321,12 @@ impl State {
             output,
             output_manager_state,
             surfaces: HashMap::new(),
+            renderer: None,
+            render_rx,
             config,
             status_tx,
             shutdown,
+            snapshot_done: false,
         })
     }
 
@@ -301,6 +334,25 @@ impl State {
     #[must_use]
     pub fn surface_count(&self) -> usize {
         self.surfaces.len()
+    }
+
+    /// Render the currently committed surfaces offscreen and read the pixels
+    /// back as a BGRA [`FrameBuffer`].
+    pub fn render_frame(&mut self) -> anyhow::Result<FrameBuffer> {
+        let surfaces: Vec<(WlBuffer, i32, i32)> = self
+            .surfaces
+            .values()
+            .filter_map(|info| {
+                info.buffer
+                    .as_ref()
+                    .map(|buffer| (buffer.clone(), info.x, info.y))
+            })
+            .collect();
+        let renderer = self
+            .renderer
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("no offscreen renderer configured"))?;
+        renderer.render(&surfaces)
     }
 
     fn report_surface_count(&self) {
@@ -323,21 +375,60 @@ impl CompositorHandler for State {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
-        let buffer_dims = with_states(surface, |states| {
+        let committed = with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             let attrs = guard.current();
             match attrs.buffer {
                 Some(BufferAssignment::NewBuffer(ref buffer)) => {
-                    with_buffer_contents(buffer, |_, _, data| (data.width, data.height)).ok()
+                    let (width, height) =
+                        with_buffer_contents(buffer, |_, _, data| (data.width, data.height))
+                            .ok()
+                            .unwrap_or((0, 0));
+                    let width = u32::try_from(width).unwrap_or(0);
+                    let height = u32::try_from(height).unwrap_or(0);
+                    Some((buffer.clone(), width, height))
                 }
                 _ => None,
             }
         });
 
-        self.surfaces.insert(surface.id(), ());
+        let id = surface.id();
+        let existing = self.surfaces.get(&id).cloned();
+        // Trivial tiling: first committed surface at (0,0), each subsequent one
+        // offset diagonally by 20px. Re-commits (e.g. resize) keep their slot.
+        let (x, y) = match &existing {
+            Some(info) => (info.x, info.y),
+            None => {
+                let index = self.surfaces.len() as i32;
+                (index * 20, index * 20)
+            }
+        };
+        let info = match (committed, existing) {
+            (Some((buffer, width, height)), _prev) => SurfaceInfo {
+                buffer: Some(buffer),
+                width,
+                height,
+                x,
+                y,
+            },
+            (None, prev) => match prev {
+                Some(mut prev) => {
+                    prev.buffer = None;
+                    prev
+                }
+                None => SurfaceInfo {
+                    buffer: None,
+                    width: 0,
+                    height: 0,
+                    x,
+                    y,
+                },
+            },
+        };
+        self.surfaces.insert(id, info);
         self.report_surface_count();
 
-        tracing::debug!(?buffer_dims, "surface commit");
+        tracing::debug!(x, y, "surface commit");
     }
 
     fn destroyed(&mut self, surface: &WlSurface) {
