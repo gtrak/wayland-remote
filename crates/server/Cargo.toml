@@ -1,0 +1,36 @@
+[package]
+name = "wayland-remote-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+calloop.workspace = true
+quinn.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
+smithay.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+thiserror.workspace = true
+wayland-server.workspace = true
+
+[dev-dependencies]
+image.workspace = true
+tempfile.workspace = true
+wayland-client.workspace = true
+wayland-protocols.workspace = true
+
+[[bin]]
+name = "wayland-remote-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "wr-dump"
+path = "src/bin/wr-dump.rs"
+
+[lints]
+workspace = true

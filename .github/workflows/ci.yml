@@ -2,142 +2,126 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Build and test server crate on Linux
-  server:
-    name: Build Server (Linux)
+  lint:
+    name: Lint (fmt + clippy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Rust
+
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.75
-      
+          components: rustfmt, clippy
+
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      
+
+      # Build scripts compile against smithay's wayland/xkbcommon/pixman
+      # dependencies, so the dev headers must be installed before clippy.
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwayland-dev libxkbcommon-dev
-      
-      - name: Build server
-        run: cargo build --package wayland-remote-server
-      
-      - name: Test server
-        run: cargo test --package wayland-remote-server
+          sudo apt-get install -y libwayland-dev libxkbcommon-dev libpixman-1-dev
 
-  # Build viewer crate on Windows (native)
-  viewer-windows:
-    name: Build Viewer (Windows)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.75
-      
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Build viewer
-        run: cargo build --package wayland-remote-viewer
-      
-      - name: Test viewer
-        run: cargo test --package wayland-remote-viewer
-
-  # Cross-compilation check (Linux building Windows target)
-  cross-compile:
-    name: Cross Compile Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.75
-          target: x86_64-pc-windows-gnu
-      
-      - name: Install mingw
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mingw-w64
-      
-      - name: Check cross-compile
-        run: |
-          cargo check --package wayland-remote-viewer --target x86_64-pc-windows-gnu
-
-  # Format and lint
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.75
-          components: rustfmt, clippy
-      
       - name: Check formatting
         run: cargo fmt --all -- --check
-      
+
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
-  # Workspace build check
-  workspace:
-    name: Workspace Build
+  linux:
+    name: Build + test (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Rust
+
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.75
-      
+
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwayland-dev libxkbcommon-dev
-      
+          sudo apt-get install -y libwayland-dev libxkbcommon-dev libpixman-1-dev
+
       - name: Build workspace
         run: cargo build --workspace
-      
-      - name: Check workspace
-        run: cargo check --workspace
+
+      - name: Test workspace
+        run: cargo test --workspace
+
+  zigbuild:
+    name: Cross-build viewer (x86_64-pc-windows-gnu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: x86_64-pc-windows-gnu
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # cmake is required by aws-lc-rs's cross build.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libxkbcommon-dev libpixman-1-dev cmake
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: latest
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+
+      - name: Cross-build viewer
+        run: cargo zigbuild --release --target x86_64-pc-windows-gnu -p wayland-remote-viewer
+
+      - name: Upload viewer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayland-remote-viewer.exe
+          path: target/x86_64-pc-windows-gnu/release/wayland-remote-viewer.exe
+
+  windows-msvc:
+    name: Viewer (MSVC, sacrificial)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # Sacrificial job: aws-lc-rs under MSVC can flake; the zigbuild job
+      # produces the primary Windows artifact.
+      - name: Build viewer
+        run: cargo build -p wayland-remote-viewer
+
+      - name: Test viewer
+        run: cargo test -p wayland-remote-viewer

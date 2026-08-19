@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/protocol",
+    "crates/server",
+    "crates/viewer",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+
+[workspace.dependencies]
+# Pinned per lat.md/decisions.md dependency table.
+smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "renderer_pixman"] }
+quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs", "log"] }
+rustls = { version = "0.23.43", features = ["aws-lc-rs"] }
+rcgen = { version = "0.14.9", features = ["aws_lc_rs"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time", "macros", "sync"] }
+calloop = "0.14.4"
+wayland-server = "0.31.14"
+wayland-client = "0.31.15"
+wayland-protocols = "0.32.13"
+lz4_flex = { version = "0.14.0", default-features = false, features = ["std"] }
+thiserror = "2.0.20"
+anyhow = "1.0.104"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+bytes = "1.12.1"
+image = "0.25.10"
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
+# Dev-only (test fixtures); not in the decisions.md table, pinned here for
+# workspace-wide consistency.
+tempfile = "3.27.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

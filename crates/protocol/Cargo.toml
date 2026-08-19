@@ -1,0 +1,13 @@
+[package]
+name = "wayland-remote-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bytes.workspace = true
+lz4_flex.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
