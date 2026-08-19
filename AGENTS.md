@@ -4,6 +4,12 @@
 - Run `lat search` to find sections relevant to your task. Read them to understand the design intent before writing code.
 - Run `lat expand` on user prompts to expand any `[[refs]]` — this resolves section names to file locations and provides context.
 
+# Documenting uncommon APIs
+
+When you research an unfamiliar or non-obvious API (library internals, framework wiring patterns, version-specific signatures not obvious from docs), **write the findings to a skill file** under `.agents/skills/` before writing implementation code. This prevents future agents from retracing the same research steps — a skill file is a one-time research investment that pays off every subsequent delegation.
+
+Name the skill after the library or API surface (e.g. `.agents/skills/smithay-07-api/SKILL.md`). Include exact type signatures, import paths, code patterns, and gotchas. Future agents read the skill instead of re-deriving the API from docs.rs or source.
+
 # Post-task checklist (REQUIRED — do not skip)
 
 After EVERY task, before responding to the user:

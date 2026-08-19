@@ -7,7 +7,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 bytes.workspace = true
-calloop.workspace = true
+calloop = { workspace = true, features = ["signals"] }
 quinn.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
