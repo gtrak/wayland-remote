@@ -18,8 +18,9 @@
 //!   conversion anywhere. Row stride travels in the frame header because the
 //!   renderer may pad rows.
 //!
-//! The public API is filled in by plan 001 issue 02; for now the module
-//! skeleton below marks the planned shape of the crate.
+//! The crate is implemented by plan 001 issue 02: message types,
+//! little-endian field-wise (de)serialization with varint framing, and the
+//! lz4 block codec.
 
 /// Control-stream message types.
 pub mod message;
@@ -29,3 +30,7 @@ pub mod codec;
 
 /// Per-frame lz4 block compression helpers.
 pub mod compress;
+
+pub use codec::*;
+pub use compress::*;
+pub use message::*;
