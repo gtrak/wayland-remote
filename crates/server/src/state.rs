@@ -38,7 +38,7 @@ use smithay::wayland::compositor::{
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::shm::{ShmHandler, ShmState, with_buffer_contents};
-use wayland_remote_protocol::Compression;
+use wayland_remote_protocol::{Compression, InputEvent};
 use wayland_server::backend::{ClientData, ObjectId};
 use wayland_server::protocol::wl_buffer::WlBuffer;
 use wayland_server::protocol::wl_surface::WlSurface;
@@ -276,6 +276,8 @@ pub struct State {
     pub status_tx: Option<Sender<usize>>,
     /// Set by the signal source (or externally) to request shutdown.
     pub shutdown: Arc<AtomicBool>,
+    /// Input event router (injects network input into the smithay seat).
+    pub input_router: crate::input::InputRouter,
     /// Tracks whether a `--snapshot` frame has been written (exactly once).
     pub snapshot_done: bool,
 }
@@ -334,6 +336,7 @@ impl State {
             config,
             status_tx,
             shutdown,
+            input_router: crate::input::InputRouter::new(),
             snapshot_done: false,
         })
     }
@@ -342,6 +345,11 @@ impl State {
     #[must_use]
     pub fn surface_count(&self) -> usize {
         self.surfaces.len()
+    }
+
+    /// Inject a network input event into the smithay seat.
+    pub fn inject_input(&mut self, event: InputEvent, serial: Serial, time: u32) {
+        crate::input::inject(self, event, serial, time);
     }
 
     /// Render the currently committed surfaces offscreen and read the pixels

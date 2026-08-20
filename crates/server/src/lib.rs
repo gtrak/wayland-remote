@@ -5,6 +5,7 @@
 //! the QUIC frame server lands in issue 05.
 
 pub mod bridge;
+pub mod input;
 pub mod net;
 pub mod rendering;
 pub mod state;
@@ -127,9 +128,10 @@ pub fn run(
         let insert = handle.insert_source(comp_bridge.input_rx, move |event, _, state| {
             if let calloop::channel::Event::Msg(cmd) = event {
                 match cmd {
-                    CompositorCommand::Input(input) => {
-                        // Seat input injection is a later milestone; log for now.
-                        tracing::info!(?input, "compositor: input event from viewer");
+                    CompositorCommand::Input(event) => {
+                        let serial = state.input_router.next_serial();
+                        let time = state.input_router.now_ms();
+                        state.inject_input(event, serial, time);
                     }
                     CompositorCommand::RenderRequest(req) => {
                         let RenderRequest::Render { reply } = req;

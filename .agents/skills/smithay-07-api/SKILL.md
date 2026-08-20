@@ -652,3 +652,101 @@ The exact method names on `PixmanFrame` (the render context) are the main unknow
 - `clear(&mut self, color: [f32; 4]) -> Result<(), Error>` (or via a Result-returning method)
 
 If the method names differ, adapt — the pattern is always "begin render → draw textures → implicit finish on drop → readback".
+
+## Input Injection (Issue 02 / Plan 002)
+
+### Getting handles from the seat
+
+```rust
+// Seat<State> already created in issue 03 with add_keyboard + add_pointer.
+// Get handles at any time:
+let keyboard: Option<KeyboardHandle<State>> = state.seat.get_keyboard();
+let pointer: Option<PointerHandle<State>> = state.seat.get_pointer();
+```
+
+### Keyboard input injection
+
+```rust
+use smithay::input::keyboard::{KeyboardHandle, Keycode, KeyboardKeyState, KeysymHandle};
+use smithay::utils::Serial;
+
+// Keycode: evdev keycode = scancode + 8 (the +8 convention for xkb/evdev).
+let keycode: Keycode = (scancode + 8) as u32;
+
+// Inject a key press/release:
+let keyboard = state.seat.get_keyboard().unwrap();
+keyboard.input(
+    &mut state,           // &mut D (State)
+    keycode,              // Keycode (u32)
+    KeyboardKeyState::Pressed,  // or Released
+    serial,               // Serial (monotonically increasing)
+    time,                 // u32 milliseconds (server monotonic)
+    |&mut state, &KeyboardHandle, &KeysymHandle| {
+        // Callback after xkb processing; return what you want.
+        // For text input, smithay emits wl_keyboard.key automatically.
+        // The callback receives the keysym handle with modifier state.
+        // Return true to forward, false to suppress (for grabs).
+        true
+    },
+);
+```
+
+`KeyboardKeyState` is at `smithay::input::keyboard::KeyboardKeyState::{Pressed, Released}`.
+
+### Keyboard focus
+
+```rust
+keyboard.set_focus(&mut state, Some(&surface), serial);
+// Or to clear: keyboard.set_focus(&mut state, None, serial);
+```
+
+### Pointer input injection
+
+```rust
+use smithay::input::pointer::{MotionEvent, ButtonEvent, AxisFrame, AxisSource, AxisDirection, ButtonState};
+use smithay::utils::{Point, Logical, Serial};
+
+// Absolute motion to (x, y) in surface-local logical coords:
+let pointer = state.seat.get_pointer().unwrap();
+pointer.motion(
+    &mut state,
+    &MotionEvent {
+        location: Point::<f64, Logical>::from((x, y)),
+        serial,
+        time,
+    },
+);
+
+// Button press/release:
+pointer.button(
+    &mut state,
+    &ButtonEvent {
+        button,         // u32 linux BTN_* code
+        state: ButtonState::Pressed,  // or Released
+        serial,
+        time,
+    },
+);
+
+// Scroll/axis:
+let mut frame = AxisFrame::new(time).source(AxisSource::Wheel);
+frame.value(AxisDirection::Vertical, dy * 15.0);  // 15.0 per tick like libinput
+frame.stop(AxisDirection::Vertical);
+pointer.axis(&mut state, frame);
+```
+
+`ButtonState` is at `smithay::input::pointer::ButtonState::{Pressed, Released}`.
+`AxisSource` is at `smithay::input::pointer::AxisSource::Wheel`.
+`AxisDirection` is at `smithay::input::pointer::AxisDirection::{Vertical, Horizontal}`.
+
+### Serial/time
+
+```rust
+use std::sync::atomic::{AtomicU32, Ordering};
+// In InputRouter:
+serial_counter: AtomicU32,
+// serial = Serial::from(serial_counter.fetch_add(1, Ordering::Relaxed))
+// time = (start.elapsed().as_millis() as u32) or similar monotonic ms
+```
+
+`Serial::from(u32)` creates a serial. Never reuse serials.

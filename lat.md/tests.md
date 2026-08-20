@@ -109,3 +109,19 @@ Scancodes with the extended flag produce the correct KeyDown/KeyUp events with t
 ### Session handshake
 
 The viewer's QUIC client completes the Hello/Welcome handshake and reports the server's dimensions.
+
+## Input Injection
+
+Scancode-to-keycode translation tests for the server-side input router that injects network InputEvents into the smithay seat.
+
+### Non-extended scancode identity
+
+A standard Windows Set-1 scancode (0x1E for A) maps to the same Linux evdev keycode (30) without an offset — smithay adds the +8 for xkb internally.
+
+### Extended key mapping
+
+An extended scancode with the 0x100 flag set (e.g. Left arrow 0x14B) maps to the correct Linux keycode (105) via the extended-key lookup table.
+
+### Unknown scancode dropped
+
+An unmapped extended scancode produces None and is silently dropped, never causing a panic.
