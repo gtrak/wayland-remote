@@ -7,6 +7,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -37,6 +38,7 @@ use smithay::wayland::compositor::{
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::shm::{ShmHandler, ShmState, with_buffer_contents};
+use wayland_remote_protocol::Compression;
 use wayland_server::backend::{ClientData, ObjectId};
 use wayland_server::protocol::wl_buffer::WlBuffer;
 use wayland_server::protocol::wl_surface::WlSurface;
@@ -56,6 +58,10 @@ pub struct Config {
     /// If set, render once after the first client commits a surface, write the
     /// frame as a PNG to this path, and exit.
     pub snapshot: Option<PathBuf>,
+    /// QUIC listen address; `None` disables networking entirely.
+    pub listen: Option<SocketAddr>,
+    /// Frame payload compression used by the QUIC frame server.
+    pub compression: Compression,
 }
 
 impl Default for Config {
@@ -65,6 +71,8 @@ impl Default for Config {
             height: 720,
             socket_name: None,
             snapshot: None,
+            listen: None,
+            compression: Compression::Lz4,
         }
     }
 }

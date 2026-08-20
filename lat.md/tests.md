@@ -65,3 +65,23 @@ Rendering a known opaque blue pixel yields the in-memory bytes `[B, G, R, A]` (n
 ### Handles surface resize
 
 After the client re-commits the same surface at a larger size, the next render read-back reflects the new dimensions: a pixel that was background black now matches the surface pattern, and the region beyond the new size is black.
+
+## Streaming
+
+QUIC streaming integration tests: each test spawns a compositor with the QUIC frame server on a free loopback port and drives it with a real quinn client over the wire protocol.
+
+### Handshake and ping
+
+The QUIC handshake completes and a Ping is echoed as Pong with the original timestamp.
+
+### Frame roundtrip
+
+A client surface commits, the server renders and streams a frame, and the viewer receives matching BGRA pixels.
+
+### Version mismatch rejected
+
+A Hello with a wrong protocol version causes the server to close the connection with an application error.
+
+### Frame coalescing
+
+Frames stream to the viewer with monotonically increasing frame ids.

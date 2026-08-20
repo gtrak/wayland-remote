@@ -4,11 +4,13 @@
 //! import it. The headless Wayland compositor lands in plan 001 issue 03;
 //! the QUIC frame server lands in issue 05.
 
+pub mod bridge;
+pub mod net;
 pub mod rendering;
 pub mod state;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
@@ -19,7 +21,10 @@ use smithay::wayland::socket::ListeningSocketSource;
 use wayland_server::Display;
 use wayland_server::backend::ClientData;
 
-use crate::rendering::{OffscreenRenderer, RenderRequest};
+use crate::bridge::{CompositorCommand, NetCommand, channels};
+use crate::net::cert::ServerCert;
+use crate::net::{NetSettings, run_server};
+use crate::rendering::{FrameBuffer, OffscreenRenderer, RenderRequest};
 use crate::state::{ClientState, Config, State};
 
 /// Returns the crate version.
@@ -90,6 +95,67 @@ pub fn run(
         state.shutdown.store(true, Ordering::SeqCst);
     })?;
 
+    // Optional QUIC frame server: all network I/O runs on a dedicated tokio
+    // runtime; frames cross to it through `frame_tx`, commands come back over
+    // the calloop channel inserted below (the compositor thread never awaits).
+    let mut runtime: Option<tokio::runtime::Runtime> = None;
+    let mut frame_tx: Option<tokio::sync::mpsc::UnboundedSender<NetCommand>> = None;
+    let frame_counter = Arc::new(AtomicU64::new(0));
+    if let Some(listen) = state.config.listen {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        let cert = ServerCert::load_or_generate()?;
+        let settings = NetSettings {
+            listen,
+            compression: state.config.compression,
+            cert,
+            width: state.config.width,
+            height: state.config.height,
+        };
+        let (net_bridge, comp_bridge) = channels();
+        rt.spawn(async move {
+            if let Err(err) = run_server(&settings, net_bridge).await {
+                tracing::error!(?err, "QUIC frame server failed");
+            }
+        });
+        // The calloop channel's receiver is the event source; the closure
+        // owns its own copies of the bridge sender and counter so the loop
+        // body below can keep using `frame_tx`/`frame_counter` freely.
+        let bridge_tx = comp_bridge.frame_tx.clone();
+        let counter = frame_counter.clone();
+        let insert = handle.insert_source(comp_bridge.input_rx, move |event, _, state| {
+            if let calloop::channel::Event::Msg(cmd) = event {
+                match cmd {
+                    CompositorCommand::Input(input) => {
+                        // Seat input injection is a later milestone; log for now.
+                        tracing::info!(?input, "compositor: input event from viewer");
+                    }
+                    CompositorCommand::RenderRequest(req) => {
+                        let RenderRequest::Render { reply } = req;
+                        match state.render_frame() {
+                            Ok(frame) => {
+                                let _ = reply.send(frame.clone());
+                                push_frame(&bridge_tx, &counter, frame);
+                            }
+                            Err(err) => tracing::warn!(?err, "render request failed"),
+                        }
+                    }
+                }
+            }
+        });
+        // `InsertError` holds the `!Sync` std-mpsc receiver inside the
+        // channel source, so it cannot be wrapped in `anyhow::Error`.
+        if let Err(err) = insert {
+            return Err(anyhow::anyhow!(
+                "failed to insert network input channel: {err}"
+            ));
+        }
+        frame_tx = Some(comp_bridge.frame_tx);
+        runtime = Some(rt);
+        tracing::info!(listen = %listen, "QUIC frame server enabled");
+    }
+
     loop {
         event_loop.dispatch(Some(Duration::from_millis(50)), &mut state)?;
         display.dispatch_clients(&mut state)?;
@@ -108,7 +174,10 @@ pub fn run(
                 let RenderRequest::Render { reply } = req;
                 match state.render_frame() {
                     Ok(frame) => {
-                        let _ = reply.send(frame);
+                        let _ = reply.send(frame.clone());
+                        if let Some(tx) = &frame_tx {
+                            push_frame(tx, &frame_counter, frame);
+                        }
                     }
                     Err(err) => tracing::warn!(?err, "render request failed"),
                 }
@@ -131,10 +200,45 @@ pub fn run(
             }
         }
 
+        // Stream a fresh frame to connected viewers while any surface exists.
+        if let Some(tx) = &frame_tx
+            && state.surface_count() > 0
+        {
+            match state.render_frame() {
+                Ok(frame) => push_frame(tx, &frame_counter, frame),
+                Err(err) => tracing::warn!(?err, "stream frame render failed"),
+            }
+        }
+
         if shutdown.load(Ordering::Relaxed) {
             break;
         }
     }
 
+    // Stop the QUIC server: tell the frame pump to exit, then let the tokio
+    // runtime drain its tasks (bounded, so a stuck session cannot hold us up).
+    if let Some(tx) = &frame_tx {
+        let _ = tx.send(NetCommand::Shutdown);
+    }
+    if let Some(rt) = runtime {
+        rt.shutdown_timeout(Duration::from_secs(5));
+    }
+
     Ok(())
+}
+
+/// Assign the next frame sequence number and push `frame` to the network
+/// side. A send error means the network side is gone; the frame is dropped.
+fn push_frame(
+    frame_tx: &tokio::sync::mpsc::UnboundedSender<NetCommand>,
+    frame_counter: &Arc<AtomicU64>,
+    frame: FrameBuffer,
+) {
+    let frame_id = frame_counter.fetch_add(1, Ordering::SeqCst) + 1;
+    if frame_tx
+        .send(NetCommand::Frame { frame, frame_id })
+        .is_err()
+    {
+        tracing::debug!("frame channel closed; frame streaming stopped");
+    }
 }

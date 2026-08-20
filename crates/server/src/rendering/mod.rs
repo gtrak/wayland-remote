@@ -61,6 +61,7 @@ impl FrameBuffer {
 }
 
 /// A request the compositor thread handles to produce a rendered frame.
+#[derive(Debug)]
 pub enum RenderRequest {
     /// Render the current surface set and send the result over `reply`.
     Render {
