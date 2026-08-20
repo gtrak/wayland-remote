@@ -69,3 +69,11 @@ Each toplevel is therefore independently movable, resizable, and closable on the
 Frame reception runs on a separate tokio task holding a cloned quinn connection, while the control loop holds the session mutably in a `select!`.
 
 The clone comes from `ViewerSession::connection()`, so `next_frame(&self)` and `send_input(&mut self)` sit on different borrows and do not conflict.
+
+### Drive mode
+
+The `drive` subcommand is a no-GUI scripted client for Windows and Linux: it connects, waits for a window, captures a baseline frame, runs a scripted input sequence, saves the first changed frame as a PNG, and prints a JSON summary.
+
+It waits for a `WindowEvent::Created`, records a `frame_0.png` baseline, sends clicks/keys/waits from the CLI, and captures frames until one differs from the baseline or the `--frames` budget is exhausted.
+
+`drive::run_drive` drives a current-thread tokio runtime like headless mode; the GUI and headless paths are untouched and are still dispatched by `run_display`. The JSON summary is formatted by hand (no `serde`) so the crate has no serialization dependency. See [[crates/viewer/src/display/drive.rs#run_drive]] and [[crates/viewer/src/display/mod.rs#run_display]].

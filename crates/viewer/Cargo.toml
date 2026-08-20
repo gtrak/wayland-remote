@@ -8,6 +8,7 @@ rust-version.workspace = true
 anyhow.workspace = true
 quinn.workspace = true
 rustls.workspace = true
+image.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 wayland-remote-protocol.workspace = true

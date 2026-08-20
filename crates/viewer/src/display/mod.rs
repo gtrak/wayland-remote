@@ -3,8 +3,10 @@
 #[cfg(windows)]
 pub mod win;
 
+mod drive;
 mod headless;
 
+pub use drive::{DriveAction, DriveConfig, run_drive};
 pub use headless::run_headless;
 
 #[cfg(windows)]
