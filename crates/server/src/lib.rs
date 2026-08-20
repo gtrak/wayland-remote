@@ -145,7 +145,7 @@ pub fn run(
                         {
                             if let Some(kbd) = state.seat.get_keyboard() {
                                 let serial = state.input_router.next_serial();
-                                kbd.set_focus(state, Some(&surface), serial);
+                                kbd.set_focus(state, Some(surface), serial);
                             }
                         }
                     }
