@@ -4,7 +4,8 @@
 //! is framed as `varint(len) || bytes(message)`; the payload begins with a
 //! varint tag identifying the variant:
 //!
-//! - `Message`: Hello=1, Input=2, Welcome=3, WindowEvent=4, Ping=5, Pong=6
+//! - `Message`: Hello=1, Input=2, Welcome=3, WindowEvent=4, Ping=5, Pong=6,
+//!   SetFocus=7, ConfigureWindow=8, CloseWindow=9
 //! - `InputEvent`: KeyDown=1, KeyUp=2, PointerMove=3, PointerButton=4, Axis=5
 //! - `WindowEventKind`: Created=1, Destroyed=2, Resized=3, Focused=4,
 //!   Unfocused=5
@@ -209,6 +210,24 @@ pub fn encode_message(msg: &Message, w: &mut impl io::Write) -> io::Result<()> {
             encode_varint(6, &mut buf)?;
             write_u64(*timestamp_ns, &mut buf)?;
         }
+        Message::SetFocus { window_id } => {
+            encode_varint(7, &mut buf)?;
+            write_u64(*window_id, &mut buf)?;
+        }
+        Message::ConfigureWindow {
+            window_id,
+            width,
+            height,
+        } => {
+            encode_varint(8, &mut buf)?;
+            write_u64(*window_id, &mut buf)?;
+            write_u32(*width, &mut buf)?;
+            write_u32(*height, &mut buf)?;
+        }
+        Message::CloseWindow { window_id } => {
+            encode_varint(9, &mut buf)?;
+            write_u64(*window_id, &mut buf)?;
+        }
     }
     encode_varint(buf.len() as u64, w)?;
     w.write_all(&buf)
@@ -257,6 +276,17 @@ pub fn decode_message(r: &mut impl io::Read) -> Result<Message, DecodeError> {
         }),
         6 => Ok(Message::Pong {
             timestamp_ns: read_u64(&mut cursor)?,
+        }),
+        7 => Ok(Message::SetFocus {
+            window_id: read_u64(&mut cursor)?,
+        }),
+        8 => Ok(Message::ConfigureWindow {
+            window_id: read_u64(&mut cursor)?,
+            width: read_u32(&mut cursor)?,
+            height: read_u32(&mut cursor)?,
+        }),
+        9 => Ok(Message::CloseWindow {
+            window_id: read_u64(&mut cursor)?,
         }),
         tag => Err(DecodeError::UnknownMessageTag(tag)),
     }

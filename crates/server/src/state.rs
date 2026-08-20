@@ -18,6 +18,7 @@ use smithay::delegate_compositor;
 use smithay::delegate_output;
 use smithay::delegate_seat;
 use smithay::delegate_shm;
+use smithay::delegate_xdg_shell;
 use smithay::input::keyboard::{KeyboardTarget, KeysymHandle, ModifiersState, XkbConfig};
 use smithay::input::pointer::{
     AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent,
@@ -37,10 +38,15 @@ use smithay::wayland::compositor::{
 };
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::seat::WaylandFocus;
+use smithay::wayland::shell::xdg::{
+    Configure, PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+    XdgToplevelSurfaceData,
+};
 use smithay::wayland::shm::{ShmHandler, ShmState, with_buffer_contents};
 use wayland_remote_protocol::{Compression, InputEvent};
 use wayland_server::backend::{ClientData, ObjectId};
 use wayland_server::protocol::wl_buffer::WlBuffer;
+use wayland_server::protocol::wl_seat;
 use wayland_server::protocol::wl_surface::WlSurface;
 use wayland_server::{Client, DisplayHandle, Resource};
 
@@ -261,10 +267,13 @@ pub struct State {
     pub display_handle: DisplayHandle,
     pub compositor_state: CompositorState,
     pub shm_state: ShmState,
+    pub xdg_shell_state: XdgShellState,
     pub seat_state: SeatState<State>,
     pub seat: Seat<State>,
     pub output: Output,
     pub output_manager_state: OutputManagerState,
+    /// Tracks xdg toplevels, window ids, focus, and pending window events.
+    pub window_manager: crate::window::WindowManager,
     /// Committed surfaces, keyed by object id, with buffer + layout position.
     pub surfaces: HashMap<ObjectId, SurfaceInfo>,
     /// Offscreen renderer, initialized after display setup.
@@ -293,6 +302,7 @@ impl State {
     ) -> anyhow::Result<Self> {
         let compositor_state = CompositorState::new::<State>(&display_handle);
         let shm_state = ShmState::new::<State>(&display_handle, vec![]);
+        let xdg_shell_state = XdgShellState::new::<State>(&display_handle);
 
         let mut seat_state = SeatState::<State>::new();
         let mut seat = seat_state.new_wl_seat(&display_handle, "wayland-remote");
@@ -326,10 +336,12 @@ impl State {
             display_handle,
             compositor_state,
             shm_state,
+            xdg_shell_state,
             seat_state,
             seat,
             output,
             output_manager_state,
+            window_manager: crate::window::WindowManager::new(),
             surfaces: HashMap::new(),
             renderer: None,
             render_rx,
@@ -441,8 +453,24 @@ impl CompositorHandler for State {
                 },
             },
         };
+        // xdg toplevel mapping: the first commit after the client acked its
+        // initial configure maps the window and queues a Created event.
+        let (width, height) = (info.width, info.height);
         self.surfaces.insert(id, info);
         self.report_surface_count();
+        self.window_manager.on_commit(surface, width, height);
+
+        // Toplevels store the client-set title in their role data (set_title
+        // is not double-buffered); sync it so window events carry it.
+        let title = with_states(surface, |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().ok().and_then(|guard| guard.title.clone()))
+        });
+        if let Some(title) = title {
+            self.window_manager.set_title(surface, title);
+        }
 
         tracing::debug!(x, y, "surface commit");
     }
@@ -483,7 +511,47 @@ impl SeatHandler for State {
 
 impl OutputHandler for State {}
 
+impl XdgShellHandler for State {
+    fn xdg_shell_state(&mut self) -> &mut XdgShellState {
+        &mut self.xdg_shell_state
+    }
+
+    fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        // Initial-configure trap: the client cannot map the toplevel until it
+        // acks a configure. Suggest the output size as initial geometry, send
+        // the configure, then track the window.
+        surface.with_pending_state(|state| {
+            state.size = Some((self.config.width as i32, self.config.height as i32).into());
+        });
+        surface.send_configure();
+        self.window_manager.register(surface);
+    }
+
+    fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {
+        // Popups are not supported in M3; nothing to configure.
+    }
+
+    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
+
+    fn reposition_request(
+        &mut self,
+        _surface: PopupSurface,
+        _positioner: PositionerState,
+        _token: u32,
+    ) {
+    }
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.window_manager.destroy(&surface);
+    }
+
+    fn ack_configure(&mut self, surface: WlSurface, _configure: Configure) {
+        self.window_manager.mark_acked(&surface);
+    }
+}
+
 delegate_compositor!(State);
 delegate_shm!(State);
 delegate_seat!(State);
 delegate_output!(State);
+delegate_xdg_shell!(State);

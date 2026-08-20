@@ -750,3 +750,80 @@ serial_counter: AtomicU32,
 ```
 
 `Serial::from(u32)` creates a serial. Never reuse serials.
+
+## xdg-shell (Plan 003)
+
+### Setup
+
+```rust
+use smithay::wayland::shell::xdg::{
+    XdgShellState, XdgShellHandler, ToplevelSurface, PopupSurface,
+    PositionerState, Configure,
+};
+use smithay::delegate_xdg_shell;
+
+// In State init:
+let xdg_shell_state = XdgShellState::new::<State>(&display_handle);
+
+// Handler impl (minimal — only required methods: new_toplevel, new_popup, grab, reposition_request):
+impl XdgShellHandler for State {
+    fn xdg_shell_state(&mut self) -> &mut XdgShellState { &mut self.xdg_shell_state }
+
+    fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        surface.with_pending_state(|state| {
+            state.size = Some((self.config.width, self.config.height).into());
+        });
+        surface.send_configure();
+    }
+
+    fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
+        surface.send_configure().ok();
+    }
+
+    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
+    fn reposition_request(&mut self, _surface: PopupSurface, _positioner: PositionerState, _token: u32) {}
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        // Remove from window manager, emit WindowEvent::Destroyed
+    }
+
+    fn ack_configure(&mut self, _surface: WlSurface, _configure: Configure) {}
+}
+
+delegate_xdg_shell!(State);
+```
+
+### ToplevelSurface API (verified from source)
+
+- `surface.send_configure() -> Serial`
+- `surface.is_initial_configure_sent() -> bool`
+- `surface.send_close()`
+- `surface.with_pending_state(|state: &mut ToplevelState| { ... })`
+- `surface.alive() -> bool`
+- `surface.xdg_toplevel() -> &xdg_toplevel::XdgToplevel`
+- `surface.wl_surface() -> &WlSurface`
+- `XdgShellState::toplevel_surfaces() -> &[ToplevelSurface]`
+
+### ToplevelState (for with_pending_state)
+
+- `state.size: Option<Size<i32, Logical>>` — None = client's natural size
+- `state.states: ToplevelStateSet` — use `.set()`/`.unset()` with `xdg_toplevel::State::{Activated, Maximized, Fullscreen}`
+
+### Initial configure trap
+
+A toplevel is NOT renderable until: `new_toplevel` → `send_configure()` → client `ack_configure` → client commits buffer. Only then create the window + emit `WindowEvent::Created`.
+
+### Focus / activated state
+
+```rust
+// Activate:
+surface.with_pending_state(|s| { s.states.set(xdg_toplevel::State::Activated); });
+surface.send_configure();
+// Deactivate:
+surface.with_pending_state(|s| { s.states.unset(xdg_toplevel::State::Activated); });
+surface.send_configure();
+```
+
+### Surface → toplevel mapping
+
+No `get_toplevel_by_surface` exists. Store the mapping yourself in `WindowManager`: `HashMap<ObjectId, ToplevelSurface>`, populated in `new_toplevel`.

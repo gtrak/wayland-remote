@@ -14,7 +14,7 @@ use calloop::channel;
 use quinn::{Connection, RecvStream, SendStream};
 use wayland_remote_protocol::{
     Compression, DecodeError, FORMAT_BGRA8, FRAME_HEADER_SIZE, FRAME_MAGIC, FrameHeader, Message,
-    decode_message, decode_varint, encode_message,
+    WindowEventKind, decode_message, decode_varint, encode_message,
 };
 
 use crate::bridge::{CompositorCommand, NetCommand};
@@ -182,6 +182,12 @@ pub(crate) async fn handle_connection(
         return;
     }
 
+    // Window events are small and order-sensitive: the frame sender
+    // forwards them to the control loop (which owns the control stream)
+    // as they arrive, so a coalesced frame burst cannot swallow them.
+    let (window_event_tx, mut window_event_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Vec<(u64, WindowEventKind)>>();
+
     // Frame sender: each frame on its own unidirectional stream.
     let mut frame_conn = conn.clone();
     tokio::spawn(async move {
@@ -190,14 +196,24 @@ pub(crate) async fn handle_connection(
                 break;
             };
             // Sender-side coalescing: absorb anything that landed while the
-            // previous frame was on the wire; only the newest is written.
+            // previous frame was on the wire; only the newest frame is
+            // written, but window events are forwarded immediately.
             tokio::time::sleep(COALESCE_WINDOW).await;
-            let mut latest = cmd;
+            let mut batch = vec![cmd];
             while let Ok(cmd) = frame_rx.try_recv() {
-                latest = cmd;
+                batch.push(cmd);
+            }
+            let mut latest: Option<NetCommand> = None;
+            for cmd in batch {
+                match cmd {
+                    NetCommand::WindowEvents(events) => {
+                        let _ = window_event_tx.send(events);
+                    }
+                    other => latest = Some(other),
+                }
             }
             match latest {
-                NetCommand::Frame { frame, frame_id } => {
+                Some(NetCommand::Frame { frame, frame_id }) => {
                     if write_frame(&mut frame_conn, &frame, frame_id, compression)
                         .await
                         .is_err()
@@ -206,12 +222,14 @@ pub(crate) async fn handle_connection(
                         break;
                     }
                 }
-                NetCommand::Shutdown => break,
+                Some(NetCommand::Shutdown) => break,
+                _ => {}
             }
         }
     });
 
-    // Control loop: input events, ping/pong, and periodic server pings.
+    // Control loop: input events, window commands, window events, ping/pong,
+    // and periodic server pings.
     let mut ping_timer = tokio::time::interval(PING_INTERVAL);
     ping_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -238,11 +256,60 @@ pub(crate) async fn handle_connection(
                             break;
                         }
                     }
+                    Ok(Message::SetFocus { window_id }) => {
+                        if input_tx
+                            .send(CompositorCommand::SetFocus { window_id })
+                            .is_err()
+                        {
+                            tracing::debug!("session: compositor channel closed");
+                            break;
+                        }
+                    }
+                    Ok(Message::ConfigureWindow { window_id, width, height }) => {
+                        if input_tx
+                            .send(CompositorCommand::ConfigureWindow {
+                                window_id,
+                                width,
+                                height,
+                            })
+                            .is_err()
+                        {
+                            tracing::debug!("session: compositor channel closed");
+                            break;
+                        }
+                    }
+                    Ok(Message::CloseWindow { window_id }) => {
+                        if input_tx
+                            .send(CompositorCommand::CloseWindow { window_id })
+                            .is_err()
+                        {
+                            tracing::debug!("session: compositor channel closed");
+                            break;
+                        }
+                    }
                     Ok(other) => {
                         tracing::warn!(?other, "session: unexpected control message");
                     }
                     Err(err) => {
                         tracing::debug!(?err, "session: control stream ended");
+                        break;
+                    }
+                }
+            }
+            events = window_event_rx.recv() => {
+                // The frame sender forwards window events; None means it has
+                // exited, which ends the session.
+                let Some(events) = events else {
+                    break;
+                };
+                for (window_id, event) in events {
+                    if write_message(
+                        &mut ctrl_send,
+                        &Message::WindowEvent { window_id, event },
+                    )
+                    .await
+                    .is_err()
+                    {
                         break;
                     }
                 }

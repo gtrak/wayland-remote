@@ -57,12 +57,14 @@ pub(crate) struct SessionSlot {
 /// Active sessions' frame inlets, fanned out to by the frame pump.
 pub(crate) type SessionRegistry = Arc<RwLock<Vec<SessionSlot>>>;
 
-/// Forward frames from the compositor channel to every connected session.
+/// Forward frames and window events from the compositor channel to every
+/// connected session.
 ///
 /// After each received command a short [`COALESCE_WINDOW`] grace period is
-/// observed, then the queue is drained and only the newest frame is
-/// delivered (sender-side coalescing). Coalescing applies to frames only:
-/// a `Shutdown` landing inside the window never swallows a pending frame —
+/// observed, then the queue is drained: only the newest frame is delivered
+/// (sender-side coalescing), while window events are always forwarded in
+/// order — they are small and must not be swallowed by a frame burst.
+/// A `Shutdown` landing inside the window never swallows a pending frame —
 /// the newest frame is delivered first, then the pump exits.
 async fn frame_pump(
     mut frame_rx: tokio::sync::mpsc::UnboundedReceiver<NetCommand>,
@@ -73,29 +75,37 @@ async fn frame_pump(
             break;
         };
         tokio::time::sleep(COALESCE_WINDOW).await;
-        let mut latest_frame = match first {
-            NetCommand::Frame { .. } => Some(first),
-            NetCommand::Shutdown => None,
-        };
-        let mut shutdown = latest_frame.is_none();
+        let mut pending = vec![first];
         while let Ok(cmd) = frame_rx.try_recv() {
+            pending.push(cmd);
+        }
+        let mut latest_frame: Option<NetCommand> = None;
+        let mut window_events: Vec<NetCommand> = Vec::new();
+        let mut shutdown = false;
+        for cmd in pending {
             match cmd {
                 NetCommand::Frame { .. } => latest_frame = Some(cmd),
+                NetCommand::WindowEvents(_) => window_events.push(cmd),
                 NetCommand::Shutdown => shutdown = true,
             }
         }
+        let txs: Vec<_> = sessions
+            .read()
+            .unwrap()
+            .iter()
+            .map(|slot| slot.tx.clone())
+            .collect();
         if let Some(NetCommand::Frame { frame, frame_id }) = latest_frame {
-            let txs: Vec<_> = sessions
-                .read()
-                .unwrap()
-                .iter()
-                .map(|slot| slot.tx.clone())
-                .collect();
             for tx in &txs {
                 let _ = tx.send(NetCommand::Frame {
                     frame: frame.clone(),
                     frame_id,
                 });
+            }
+        }
+        for events in &window_events {
+            for tx in &txs {
+                let _ = tx.send(events.clone());
             }
         }
         if shutdown {

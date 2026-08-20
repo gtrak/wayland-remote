@@ -25,6 +25,16 @@ pub enum Message {
     Ping { timestamp_ns: u64 },
     /// Echo of a Ping with the original timestamp.
     Pong { timestamp_ns: u64 },
+    /// Viewer -> server: request focus change to the given window.
+    SetFocus { window_id: u64 },
+    /// Viewer -> server: request the toplevel be resized to the given dimensions.
+    ConfigureWindow {
+        window_id: u64,
+        width: u32,
+        height: u32,
+    },
+    /// Viewer -> server: request the toplevel be closed (equivalent to clicking the close button).
+    CloseWindow { window_id: u64 },
 }
 
 /// An input event forwarded from the Windows viewer to the Linux compositor.

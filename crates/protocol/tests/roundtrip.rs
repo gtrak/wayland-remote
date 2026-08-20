@@ -65,6 +65,13 @@ fn message_roundtrip() {
         Message::Pong {
             timestamp_ns: 1234567890,
         },
+        Message::SetFocus { window_id: 5 },
+        Message::ConfigureWindow {
+            window_id: 3,
+            width: 800,
+            height: 600,
+        },
+        Message::CloseWindow { window_id: 7 },
     ];
     for msg in &messages {
         let mut buf = Vec::new();

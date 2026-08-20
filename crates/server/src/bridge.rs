@@ -4,9 +4,10 @@
 //! awaits; all network I/O runs on a tokio runtime. The two sides exchange
 //! commands through channels owned here:
 //!
-//! - Frames out (compositor → network) travel a tokio unbounded mpsc: the
-//!   compositor pushes [`NetCommand::Frame`] with a non-blocking
-//!   `unbounded_send`, and the network side owns the receiver.
+//! - Frames and window events out (compositor → network) travel a tokio
+//!   unbounded mpsc: the compositor pushes [`NetCommand::Frame`] /
+//!   [`NetCommand::WindowEvents`] with a non-blocking `unbounded_send`, and
+//!   the network side owns the receiver.
 //! - Events in (network → compositor) travel a calloop sync channel: the
 //!   network side sends [`CompositorCommand`] values, and the compositor
 //!   inserts the channel's receiver into its event loop (the caller's job —
@@ -16,12 +17,12 @@
 //! decision in lat.md/decisions.md).
 
 use calloop::channel;
-use wayland_remote_protocol::InputEvent;
+use wayland_remote_protocol::{InputEvent, WindowEventKind};
 
 use crate::rendering::{FrameBuffer, RenderRequest};
 
 /// A command from the compositor thread to the network side.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum NetCommand {
     /// A rendered frame to stream to connected viewers.
     Frame {
@@ -32,6 +33,8 @@ pub enum NetCommand {
         /// frames coalesced away by the sender.
         frame_id: u64,
     },
+    /// Window lifecycle events to relay to every viewer's control stream.
+    WindowEvents(Vec<(u64, WindowEventKind)>),
     /// Stop the QUIC server and drop all sessions.
     Shutdown,
 }
@@ -41,6 +44,16 @@ pub enum NetCommand {
 pub enum CompositorCommand {
     /// An input event to dispatch into the Wayland seat.
     Input(InputEvent),
+    /// A viewer focus request: activate the given window.
+    SetFocus { window_id: u64 },
+    /// A viewer resize request: configure the given window to a new size.
+    ConfigureWindow {
+        window_id: u64,
+        width: u32,
+        height: u32,
+    },
+    /// A viewer close request: send the xdg close event to the window.
+    CloseWindow { window_id: u64 },
     /// A render request handled on the compositor thread.
     RenderRequest(RenderRequest),
 }

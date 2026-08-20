@@ -9,6 +9,7 @@ pub mod input;
 pub mod net;
 pub mod rendering;
 pub mod state;
+pub mod window;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -133,6 +134,21 @@ pub fn run(
                         let time = state.input_router.now_ms();
                         state.inject_input(event, serial, time);
                     }
+                    CompositorCommand::SetFocus { window_id } => {
+                        state.window_manager.set_focus(window_id);
+                    }
+                    CompositorCommand::ConfigureWindow {
+                        window_id,
+                        width,
+                        height,
+                    } => {
+                        state
+                            .window_manager
+                            .configure_window(window_id, width, height);
+                    }
+                    CompositorCommand::CloseWindow { window_id } => {
+                        state.window_manager.close_window(window_id);
+                    }
                     CompositorCommand::RenderRequest(req) => {
                         let RenderRequest::Render { reply } = req;
                         match state.render_frame() {
@@ -162,6 +178,15 @@ pub fn run(
         event_loop.dispatch(Some(Duration::from_millis(50)), &mut state)?;
         display.dispatch_clients(&mut state)?;
         display.flush_clients()?;
+
+        // Relay window lifecycle events (Created/Destroyed/…) to viewers on
+        // their control streams.
+        if let Some(tx) = &frame_tx {
+            let events = state.window_manager.drain_events();
+            if !events.is_empty() && tx.send(NetCommand::WindowEvents(events)).is_err() {
+                tracing::debug!("network channel closed; window events dropped");
+            }
+        }
 
         // Drain any render requests from the test back-channel.
         let requests = state.render_rx.as_ref().map(|rx| {
