@@ -145,3 +145,11 @@ No WindowEvent::Created is emitted before the client acks the initial configure 
 ### Resized on re-commit
 
 A mapped window re-committed at a larger size emits `WindowEventKind::Resized` with the new dimensions on the control stream.
+
+## Input round-trip
+
+Pointer input integration tests: the server spawns in-process, a reactive Wayland test client binds `wl_pointer` and commits a new buffer on button press, and a pointer click is injected over QUIC via a viewer session.
+
+### Pointer click round-trip
+
+A pointer click injected over QUIC is observed on the bound `wl_pointer`; the client commits a differently-colored buffer and the streamed frame's pixels change from the baseline.

@@ -8,11 +8,13 @@ use std::io::{Seek, SeekFrom, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_buffer::WlBuffer;
 use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_output::WlOutput;
+use wayland_client::protocol::wl_pointer;
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::protocol::wl_shm::{self, WlShm};
@@ -188,6 +190,37 @@ impl Dispatch<XdgSurface, ()> for XdgClientState {
     }
 }
 
+/// Shared state for the `wl_pointer` dispatch: a button-press tracker set by
+/// the event handler and polled by the test thread. `Send + Sync` because
+/// wayland-client object user data must be shared across the queue and the
+/// test thread.
+#[derive(Clone)]
+pub struct PointerData {
+    /// `Some((x, y))` once a button press was received; the test thread reads
+    /// and clears this. The coordinates are always `(0.0, 0.0)` — the test only
+    /// needs to know a button event arrived, not the exact position.
+    pub click: Arc<Mutex<Option<(f64, f64)>>>,
+}
+
+impl Dispatch<wl_pointer::WlPointer, PointerData> for XdgClientState {
+    fn event(
+        _: &mut Self,
+        _: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        data: &PointerData,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_pointer::Event::Button { state, .. } = event {
+            if state == wl_pointer::ButtonState::Pressed {
+                if let Ok(mut click) = data.click.lock() {
+                    *click = Some((0.0, 0.0));
+                }
+            }
+        }
+    }
+}
+
 /// A Wayland client with an xdg toplevel. Unlike [`TestClient`], creating the
 /// toplevel does not commit anything: the xdg-shell initial-configure trap
 /// keeps the window unmapped until the client acks a configure and commits a
@@ -203,6 +236,8 @@ pub struct XdgClient {
     toplevel: XdgToplevel,
     _pools: Vec<WlShmPool>,
     _buffers: Vec<WlBuffer>,
+    _seat: WlSeat,
+    _pointer: Option<wl_pointer::WlPointer>,
 }
 
 impl XdgClient {
@@ -221,6 +256,7 @@ impl XdgClient {
         let compositor: WlCompositor = globals.bind(&qh, 1..=5, ())?;
         let shm: WlShm = globals.bind(&qh, 1..=1, ())?;
         let wm_base: XdgWmBase = globals.bind(&qh, 1..=6, ())?;
+        let seat: WlSeat = globals.bind(&qh, 1..=7, ())?;
         let surface = compositor.create_surface(&qh, ());
         let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
         let toplevel = xdg_surface.get_toplevel(&qh, ());
@@ -237,6 +273,8 @@ impl XdgClient {
             toplevel,
             _pools: Vec::new(),
             _buffers: Vec::new(),
+            _seat: seat,
+            _pointer: None,
         })
     }
 
@@ -288,6 +326,46 @@ impl XdgClient {
 
         self._pools.push(pool);
         self._buffers.push(buffer);
+        Ok(())
+    }
+
+    /// Bind `wl_pointer` from the seat and return a clone of the click
+    /// tracker. The test thread polls [`PointerData::click`] after dispatching
+    /// events to detect a button press. Flushing ensures the bind request is
+    /// sent to the server; the test dispatches pending events afterwards.
+    pub fn bind_pointer(&mut self) -> PointerData {
+        let qh = self._queue.handle();
+        let click = Arc::new(Mutex::new(None));
+        let data = PointerData {
+            click: click.clone(),
+        };
+        let pointer = self._seat.get_pointer(&qh, data);
+        self._pointer = Some(pointer);
+        self.conn.flush().expect("flush should succeed");
+        PointerData { click }
+    }
+
+    /// Read one non-blocking batch from the Wayland socket and dispatch it.
+    ///
+    /// Unlike [`EventQueue::blocking_dispatch`], this never blocks forever:
+    /// `prepare_read` + `guard.read()` performs a *non-blocking* socket read
+    /// (returning `WouldBlock` when no data is pending), so a broken/absent
+    /// input path cannot hang the test. The test calls this in a loop, sleeping
+    /// between calls, to observe the bound pointer.
+    pub fn dispatch_pending(&mut self) -> anyhow::Result<()> {
+        while self._queue.dispatch_pending(&mut XdgClientState)? > 0 {}
+        self.conn.flush()?;
+        // Non-blocking read of any newly-arrived events; `guard.read()` also
+        // dispatches what it reads. `WouldBlock` simply means "nothing yet".
+        if let Some(guard) = self.conn.prepare_read() {
+            match guard.read() {
+                Ok(_) => {}
+                Err(wayland_client::backend::WaylandError::Io(e))
+                    if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(err) => return Err(anyhow::anyhow!("wayland socket read failed: {err}")),
+            }
+        }
+        while self._queue.dispatch_pending(&mut XdgClientState)? > 0 {}
         Ok(())
     }
 
