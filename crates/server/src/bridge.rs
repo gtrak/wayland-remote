@@ -102,6 +102,7 @@ mod tests {
             width: 1,
             height: 1,
             stride: 4,
+            window_id: 7,
         };
         compositor
             .frame_tx
@@ -130,6 +131,7 @@ mod tests {
                 assert_eq!(frame_id, 7, "sequence number must travel with the frame");
                 assert_eq!(frame.data, vec![1u8, 2, 3, 4]);
                 assert_eq!((frame.width, frame.height, frame.stride), (1, 1, 4));
+                assert_eq!(frame.window_id, 7, "window id must travel with the frame");
             }
             other => panic!("expected a frame, got {other:?}"),
         }

@@ -107,8 +107,16 @@ impl WindowManager {
         let id = surface.id();
         if let Some(&wid) = self.surface_to_window.get(&id) {
             if let Some(win) = self.windows.get_mut(&wid) {
+                // An already-mapped window re-committed at a different size is
+                // resized: update the stored size and queue a Resized event.
+                // Unchanged sizes emit nothing.
+                let resized = win.mapped && (win.width, win.height) != (width, height);
                 win.width = width;
                 win.height = height;
+                if resized {
+                    self.pending_events
+                        .push((wid, WindowEventKind::Resized { width, height }));
+                }
                 if win.acked && !win.mapped {
                     win.mapped = true;
                     // Set initial focus if none
@@ -239,5 +247,31 @@ impl WindowManager {
     #[must_use]
     pub fn window_count(&self) -> usize {
         self.windows.values().filter(|w| w.mapped).count()
+    }
+
+    /// The ids of all mapped windows, in no particular order.
+    #[must_use]
+    pub fn mapped_windows(&self) -> Vec<u64> {
+        self.windows
+            .values()
+            .filter(|w| w.mapped)
+            .map(|w| w.window_id)
+            .collect()
+    }
+
+    /// The object id of the window's underlying `wl_surface`, if the window
+    /// is tracked (key into `State::surfaces`).
+    #[must_use]
+    pub fn surface_id_for(&self, window_id: u64) -> Option<&ObjectId> {
+        self.windows.get(&window_id).map(|w| &w.surface_id)
+    }
+
+    /// The committed (width, height) of a mapped window, if it is tracked.
+    #[must_use]
+    pub fn window_size(&self, window_id: u64) -> Option<(u32, u32)> {
+        self.windows
+            .get(&window_id)
+            .filter(|w| w.mapped)
+            .map(|w| (w.width, w.height))
     }
 }

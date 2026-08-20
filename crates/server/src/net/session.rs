@@ -343,7 +343,7 @@ async fn write_frame(
     let header = FrameHeader {
         magic: FRAME_MAGIC,
         frame_id,
-        window_id: 0,
+        window_id: frame.window_id,
         width: frame.width,
         height: frame.height,
         stride: frame.stride,

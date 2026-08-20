@@ -214,6 +214,7 @@ mod tests {
                     width: 1,
                     height: 1,
                     stride: 4,
+                    window_id: 0,
                 },
                 frame_id: id + 1,
             })

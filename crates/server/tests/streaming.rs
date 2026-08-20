@@ -21,12 +21,12 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use common::{PATTERN, TestClient, argb_to_bgra};
+use common::{PATTERN, XdgClient, argb_to_bgra};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use wayland_remote_protocol::{
-    Compression, FRAME_HEADER_SIZE, FrameHeader, Message, decode_frame_header, decompress,
-    encode_message,
+    Compression, FRAME_HEADER_SIZE, FrameHeader, Message, WindowEventKind, decode_frame_header,
+    decompress, encode_message,
 };
 use wayland_remote_server::net::ERROR_VERSION_MISMATCH;
 use wayland_remote_server::net::cert::{ALPN_PROTOCOL, ServerCert};
@@ -392,14 +392,52 @@ fn frame_roundtrip() {
 
     // Keep the control streams open for the whole test: the server closes the
     // connection when the control stream ends.
-    let ctrl = runtime
+    let mut ctrl = runtime
         .block_on(handshake(&viewer.conn))
         .expect("handshake should succeed");
 
-    // Commit a 64x64 surface; the server auto-renders and streams frames.
-    let client = TestClient::connect_and_create_surface(&socket_path)
-        .expect("test client should connect and commit a surface");
+    // Commit a 64x64 toplevel buffer; the server maps the window (emitting
+    // Created on the control stream) and streams per-window frames.
+    let mut client = XdgClient::connect_with_toplevel(&socket_path)
+        .expect("xdg test client should connect and create a toplevel");
+    client
+        .ack_and_commit(64, 64, PATTERN)
+        .expect("ack + commit should succeed");
     wait_for_count(&status_rx, 1);
+
+    // The Created window event carries the id that streamed frames must tag
+    // their headers with.
+    let window_id = runtime.block_on(async {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let msg = match tokio::time::timeout(Duration::from_secs(5), ctrl.next_message()).await
+            {
+                Ok(Ok(msg)) => msg,
+                Ok(Err(err)) => panic!("control stream read failed: {err}"),
+                Err(_) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "Created window event never arrived"
+                    );
+                    continue;
+                }
+            };
+            match msg {
+                Message::WindowEvent {
+                    window_id,
+                    event: WindowEventKind::Created { .. },
+                } => return window_id,
+                Message::WindowEvent { event, .. } => {
+                    panic!("unexpected window event before Created: {event:?}")
+                }
+                Message::Ping { .. } => {
+                    // Server keepalive ping; ignored by the viewer.
+                }
+                other => panic!("unexpected control message: {other:?}"),
+            }
+        }
+    });
+    assert_ne!(window_id, 0, "window ids are assigned from 1");
 
     runtime.block_on(async {
         // Each frame arrives on its own unidirectional stream.
@@ -428,6 +466,10 @@ fn frame_roundtrip() {
             assert!(
                 header.width > 0 && header.height > 0,
                 "frame must be non-empty"
+            );
+            assert_eq!(
+                header.window_id, window_id,
+                "streamed frame must carry the created toplevel's window id"
             );
             let pixel = [pixels[0], pixels[1], pixels[2], pixels[3]];
             assert_eq!(
@@ -500,14 +542,17 @@ fn frame_coalescing() {
         .block_on(handshake(&viewer.conn))
         .expect("handshake should succeed");
 
-    let client = TestClient::connect_and_create_surface(&socket_path)
-        .expect("test client should connect and commit a surface");
+    let mut client = XdgClient::connect_with_toplevel(&socket_path)
+        .expect("xdg test client should connect and create a toplevel");
+    client
+        .ack_and_commit(64, 64, PATTERN)
+        .expect("ack + commit should succeed");
     wait_for_count(&status_rx, 1);
 
-    // The server auto-renders on every compositor tick, so frames stream
-    // without further prompting. Collect them for ~500 ms and check that
-    // delivered frame ids increase monotonically (coalescing can skip ids
-    // but never regress them).
+    // The server auto-renders every mapped window on each compositor tick,
+    // so frames stream without further prompting. Collect them for ~500 ms
+    // and check that delivered frame ids increase monotonically (coalescing
+    // can skip ids but never regress them).
     let frame_ids = runtime.block_on(async {
         let mut ids: Vec<u64> = Vec::new();
         let start = Instant::now();

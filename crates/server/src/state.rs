@@ -383,6 +383,34 @@ impl State {
         renderer.render(&surfaces)
     }
 
+    /// Render a single mapped window's committed buffer at its current size.
+    pub fn render_window(&mut self, window_id: u64) -> anyhow::Result<FrameBuffer> {
+        let (width, height) = self
+            .window_manager
+            .window_size(window_id)
+            .ok_or_else(|| anyhow::anyhow!("window {window_id} not mapped"))?;
+        let surface_id = self
+            .window_manager
+            .surface_id_for(window_id)
+            .ok_or_else(|| anyhow::anyhow!("window {window_id} not found"))?
+            .clone();
+        let info = self
+            .surfaces
+            .get(&surface_id)
+            .ok_or_else(|| anyhow::anyhow!("no surface info for window {window_id}"))?;
+        let buffer = info
+            .buffer
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("window {window_id} has no committed buffer"))?;
+        let renderer = self
+            .renderer
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("no offscreen renderer configured"))?;
+        let mut frame = renderer.render_surface(buffer, width, height)?;
+        frame.window_id = window_id;
+        Ok(frame)
+    }
+
     fn report_surface_count(&self) {
         if let Some(tx) = &self.status_tx {
             let _ = tx.send(self.surfaces.len());

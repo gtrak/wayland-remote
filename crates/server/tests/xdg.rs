@@ -253,3 +253,43 @@ fn initial_configure_before_created() {
     drop(viewer);
     stop_server(&shutdown, handle);
 }
+
+#[test]
+fn resized_on_recommit() {
+    let (listen, socket_path, status_rx, shutdown, handle) = spawn_streaming_server();
+    let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+    let mut viewer = connect_viewer(&runtime, listen);
+
+    let mut client = XdgClient::connect_with_toplevel(&socket_path)
+        .expect("xdg test client should connect and create a toplevel");
+    client
+        .ack_and_commit(64, 64, PATTERN)
+        .expect("ack + commit should succeed");
+    wait_for_count(&status_rx, 1);
+
+    let (window_id, event) = wait_for_window_event(&runtime, &mut viewer, "WindowEvent::Created");
+    assert!(
+        matches!(event, WindowEventKind::Created { .. }),
+        "expected a Created window event, got {event:?}"
+    );
+
+    // Re-commit the mapped toplevel at a larger size: the server must emit a
+    // Resized window event carrying the new dimensions.
+    client
+        .commit_buffer(128, 128, PATTERN)
+        .expect("resize commit should succeed");
+
+    let (resized_id, event) = wait_for_window_event(&runtime, &mut viewer, "WindowEvent::Resized");
+    assert_eq!(resized_id, window_id, "Resized must target the same window");
+    match event {
+        WindowEventKind::Resized { width, height } => {
+            assert_eq!(width, 128, "Resized must report the new width");
+            assert_eq!(height, 128, "Resized must report the new height");
+        }
+        other => panic!("expected a Resized window event, got {other:?}"),
+    }
+
+    drop(client);
+    drop(viewer);
+    stop_server(&shutdown, handle);
+}

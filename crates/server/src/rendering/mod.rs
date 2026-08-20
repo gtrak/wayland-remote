@@ -30,6 +30,8 @@ pub struct FrameBuffer {
     pub height: u32,
     /// Row stride in bytes. For a contiguous Argb8888 buffer this is `width * 4`.
     pub stride: u32,
+    /// The window this frame was rendered for; 0 for a full-desktop composite.
+    pub window_id: u64,
 }
 
 impl FrameBuffer {
@@ -157,6 +159,81 @@ impl OffscreenRenderer {
             width: self.width,
             height: self.height,
             stride: self.width * 4,
+            window_id: 0,
+        })
+    }
+
+    /// Render a single buffer at origin (0,0) into a `width x height` BGRA
+    /// target and read it back. `window_id` on the returned frame is 0; the
+    /// caller overrides it.
+    pub fn render_surface(
+        &mut self,
+        buffer: &WlBuffer,
+        width: u32,
+        height: u32,
+    ) -> anyhow::Result<FrameBuffer> {
+        let w = width as i32;
+        let h = height as i32;
+
+        // Import the committed buffer as a texture up front: the `Frame` holds
+        // a mutable borrow of the renderer for the whole pass, so the import
+        // must happen before the render pass begins.
+        let Some(Ok(texture)) = self.renderer.import_buffer(buffer, None, &[]) else {
+            anyhow::bail!("failed to import buffer for single-window render");
+        };
+
+        // Create the offscreen pixel buffer and bind it as the render target.
+        let buf_size: Size<i32, BufferCoord> = (w, h).into();
+        let mut image = self.renderer.create_buffer(Fourcc::Argb8888, buf_size)?;
+        let mut target = self.renderer.bind(&mut image)?;
+
+        // Begin the render pass.
+        let out_size: Size<i32, Physical> = (w, h).into();
+        let mut frame = self
+            .renderer
+            .render(&mut target, out_size, Transform::Normal)?;
+
+        // Clear to opaque black. The pixman renderer clips every draw to the
+        // supplied damage rects, so the clear rect must cover the whole frame.
+        let full: Rectangle<i32, Physical> = Rectangle::new(Point::new(0, 0), Size::new(w, h));
+        frame.clear(Color32F::BLACK, &[full])?;
+
+        // Draw the surface at origin, over its full extent (the damage rect
+        // covers the whole placed texture region).
+        let tsize = texture.size();
+        let full_tex: Rectangle<i32, Physical> =
+            Rectangle::new(Point::new(0, 0), Size::new(tsize.w, tsize.h));
+        frame.render_texture_at(
+            &texture,
+            Point::new(0, 0),
+            1,   // texture_scale
+            1.0, // output_scale
+            Transform::Normal,
+            &[full_tex],
+            &[],
+            1.0, // alpha
+        )?;
+
+        // Finish the pass (frees per-frame resources) and wait for completion.
+        // For an Image target this is an already-signaled sync point (a no-op).
+        frame
+            .finish()?
+            .wait()
+            .map_err(|_| anyhow::anyhow!("render sync point interrupted"))?;
+
+        // Read the framebuffer back as a contiguous BGRA buffer.
+        let region: Rectangle<i32, BufferCoord> = Rectangle::new(Point::new(0, 0), Size::new(w, h));
+        let mapping = self
+            .renderer
+            .copy_framebuffer(&target, region, Fourcc::Argb8888)?;
+        let pixels = self.renderer.map_texture(&mapping)?;
+
+        Ok(FrameBuffer {
+            data: pixels.to_vec(),
+            width,
+            height,
+            stride: width * 4,
+            window_id: 0,
         })
     }
 }

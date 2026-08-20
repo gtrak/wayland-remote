@@ -256,8 +256,9 @@ impl XdgClient {
 
     /// Create an ARGB8888 shm pool + buffer filled with `color`, attach it to
     /// the toplevel surface, and commit. Pools/buffers are kept alive so their
-    /// shared memory stays mapped.
-    fn commit_buffer(&mut self, width: u32, height: u32, color: u32) -> anyhow::Result<()> {
+    /// shared memory stays mapped. A re-commit at a new size is how tests
+    /// exercise mapped-window resizes.
+    pub fn commit_buffer(&mut self, width: u32, height: u32, color: u32) -> anyhow::Result<()> {
         let qh = self._queue.handle();
 
         let mut file = tempfile::tempfile()?;

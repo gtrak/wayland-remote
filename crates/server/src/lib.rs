@@ -227,13 +227,15 @@ pub fn run(
             }
         }
 
-        // Stream a fresh frame to connected viewers while any surface exists.
-        if let Some(tx) = &frame_tx
-            && state.surface_count() > 0
-        {
-            match state.render_frame() {
-                Ok(frame) => push_frame(tx, &frame_counter, frame),
-                Err(err) => tracing::warn!(?err, "stream frame render failed"),
+        // Stream a fresh frame per mapped window to connected viewers, each
+        // tagged with its window id. The sender is cloned so `state` can be
+        // borrowed mutably by `render_window` while the sender is held.
+        if let Some(tx) = frame_tx.clone() {
+            for window_id in state.window_manager.mapped_windows() {
+                match state.render_window(window_id) {
+                    Ok(frame) => push_frame(&tx, &frame_counter, frame),
+                    Err(err) => tracing::debug!(?err, window_id, "per-window render skipped"),
+                }
             }
         }
 
