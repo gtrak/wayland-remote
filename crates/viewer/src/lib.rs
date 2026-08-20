@@ -7,6 +7,7 @@ pub mod display;
 pub mod framebuf;
 pub mod input;
 pub mod session;
+pub mod window_manager;
 
 /// Returns the crate version.
 #[must_use]

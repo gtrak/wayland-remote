@@ -3,7 +3,10 @@
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use wayland_remote_protocol::Message;
+
 use crate::session::ViewerSession;
+use crate::window_manager::ViewerWindowManager;
 
 pub fn run_headless(
     addr: SocketAddr,
@@ -16,9 +19,10 @@ pub fn run_headless(
         .build()?;
 
     rt.block_on(async {
-        let session = ViewerSession::connect(addr, fingerprint, insecure).await?;
+        let mut session = ViewerSession::connect(addr, fingerprint, insecure).await?;
         eprintln!("headless: connected, {}x{}", session.width, session.height);
 
+        let mut windows = ViewerWindowManager::new();
         let deadline = Instant::now() + Duration::from_secs(duration_secs);
         let mut count = 0u64;
         let mut total = 0u64;
@@ -43,6 +47,22 @@ pub fn run_headless(
                 }
                 Err(_) => {
                     eprintln!("headless: no frame for 2s, retrying");
+                }
+            }
+            // Drain control messages (window lifecycle events, keepalive
+            // pings) that accumulated while waiting for the frame.
+            while let Some(msg) = session.try_read_control().await {
+                match msg {
+                    Message::WindowEvent { window_id, event } => {
+                        windows.handle_event(window_id, &event);
+                        eprintln!(
+                            "headless: window {window_id}: {event:?} ({} tracked)",
+                            windows.window_count()
+                        );
+                    }
+                    other => {
+                        eprintln!("headless: control message: {other:?}");
+                    }
                 }
             }
         }

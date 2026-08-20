@@ -3,6 +3,7 @@
 use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -207,6 +208,20 @@ impl ViewerSession {
             frame_id: header.frame_id,
             timestamp_ns: header.timestamp_ns,
         })
+    }
+
+    /// Try to read one control message, waiting at most 10 ms.
+    ///
+    /// Returns `None` on timeout or when the stream has ended. Lets callers
+    /// (headless mode, tests) poll for window lifecycle events between frame
+    /// reads without blocking on the stream indefinitely.
+    pub async fn try_read_control(&mut self) -> Option<Message> {
+        match tokio::time::timeout(Duration::from_millis(10), read_message(&mut self.ctrl_recv))
+            .await
+        {
+            Ok(Ok(msg)) => Some(msg),
+            _ => None,
+        }
     }
 
     /// Send an input event to the server.

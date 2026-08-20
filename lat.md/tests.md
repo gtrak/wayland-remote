@@ -125,3 +125,15 @@ An extended scancode with the 0x100 flag set (e.g. Left arrow 0x14B) maps to the
 ### Unknown scancode dropped
 
 An unmapped extended scancode produces None and is silently dropped, never causing a panic.
+
+## Window Mapping
+
+xdg-shell toplevel lifecycle tests: each test spawns a streaming server with an xdg-shell test client and a QUIC viewer to verify window events on the wire.
+
+### Toplevel lifecycle
+
+An xdg toplevel is created, acks its initial configure, commits a buffer, and the server emits WindowEvent::Created followed by WindowEvent::Destroyed on disconnect.
+
+### Initial configure before created
+
+No WindowEvent::Created is emitted before the client acks the initial configure and commits a buffer.

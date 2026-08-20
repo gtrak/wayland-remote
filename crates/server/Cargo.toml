@@ -24,7 +24,8 @@ wayland-server.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 wayland-client.workspace = true
-wayland-protocols.workspace = true
+wayland-protocols = { workspace = true, features = ["client"] }
+wayland-remote-viewer = { path = "../viewer" }
 
 [[bin]]
 name = "wayland-remote-server"
