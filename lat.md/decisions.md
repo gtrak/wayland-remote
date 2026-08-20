@@ -53,3 +53,15 @@ This follows Smithay's model and keeps compositor state lock-free. Introducing a
 Raw Win32 via windows-sys (not winit); GDI StretchDIBits is the MVP blit path.
 
 PRD Step 6 requires per-surface HWND control that winit's single-window model fights. Built natively on a Windows box and cross-compiled with cargo-zigbuild for CI artifacts.
+
+### Stretch-to-fit resize
+
+Child windows blit frames with `StretchDIBits` stretch-to-fit rather than letterbox, for M2/M3 simplicity.
+
+Tradeoff: resizing an HWND to a different aspect ratio than the remote surface distorts the content. Accepted as adequate for the MVP; letterbox is a future option.
+
+### Per-window render targets
+
+One pixman `Argb8888` render target per mapped window (via `render_surface`) instead of a single composite desktop buffer; `FrameHeader::window_id` is the demux key and the viewer keeps one `FrameStore` per window.
+
+A composite approach was rejected because it requires server-side window layout/compositing and defeats PRD Step 6's "each toplevel is its own HWND" goal.

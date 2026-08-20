@@ -86,6 +86,10 @@ A Hello with a wrong protocol version causes the server to close the connection 
 
 Frames stream to the viewer with monotonically increasing frame ids.
 
+### Per-window frame tagging
+
+A streamed frame's `window_id` matches the created toplevel's id (non-zero), proving per-window rendering and wire tagging.
+
 ## Viewer
 
 Viewer client tests: pure-function unit tests for the Win32-to-protocol input translation, plus a loopback QUIC session test against a streaming server.
@@ -137,3 +141,7 @@ An xdg toplevel is created, acks its initial configure, commits a buffer, and th
 ### Initial configure before created
 
 No WindowEvent::Created is emitted before the client acks the initial configure and commits a buffer.
+
+### Resized on re-commit
+
+A mapped window re-committed at a larger size emits `WindowEventKind::Resized` with the new dimensions on the control stream.

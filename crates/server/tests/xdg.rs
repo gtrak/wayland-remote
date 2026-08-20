@@ -256,6 +256,7 @@ fn initial_configure_before_created() {
 
 #[test]
 fn resized_on_recommit() {
+    // @lat: [[tests#Window Mapping#Resized on re-commit]]
     let (listen, socket_path, status_rx, shutdown, handle) = spawn_streaming_server();
     let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
     let mut viewer = connect_viewer(&runtime, listen);

@@ -14,12 +14,52 @@ They communicate through channels: frames out via tokio mpsc with `blocking_send
 
 ## Rendering Pipeline
 
-Client surfaces render offscreen with Smithay's pixman software renderer into a BGRA buffer that doubles as the wire payload.
+Each mapped xdg toplevel renders into its own offscreen pixman target, producing a per-window BGRA frame that is the wire payload.
 
-wl_shm buffers import as pixman textures, the surface tree renders into a `PixmanTarget`, and readback yields a BGRA buffer with a real (padded) stride. That buffer — unchanged — is what goes on the wire, so GDI can blit it with zero conversion ([[decisions#Decision Log#BGRA Wire Format]]).
+The compositor loop iterates `WindowManager::mapped_windows()` every tick and runs one render pass per window via `OffscreenRenderer::render_surface`. The resulting frame is tagged with the window's `window_id` on both `FrameHeader` and `FrameBuffer`; that id is the demux key the viewer uses to route frames to its per-window stores. wl_shm buffers import as pixman textures, and readback yields a top-down BGRA buffer with a real (padded) stride. That buffer — unchanged — is what goes on the wire, so GDI can blit it with zero conversion ([[decisions#Decision Log#BGRA Wire Format]]).
 
 ## QUIC Session Model
 
 Each connection is one quinn session: a control stream plus one unidirectional stream per frame, with receiver-side skip-stale.
 
 Control traffic (handshake, input, window events, ping/pong) shares one bidirectional stream; each compressed frame gets its own stream so a lost frame cannot head-of-line-block later frames. Receivers issue STOP_SENDING on stale frame streams — UDP-like drop-oldest semantics without custom loss recovery ([[decisions#Decision Log#Transport]]).
+
+## Viewer
+
+The Windows viewer is a native Win32/GDI client: a background net task drives the QUIC session off the UI thread, and per-window frame stores feed a GDI blit path — the network task never touches GDI.
+
+### Net task and UI thread
+
+A background thread runs a single-threaded tokio runtime that owns the QUIC session; the main thread owns the Win32 message loop and GDI.
+
+They communicate only through tokio channels (input and control commands in) and `PostMessageW` (invalidation out) — the net task never touches GDI or the message loop.
+
+### Per-window frame store
+
+Frame reception swaps each incoming frame into a per-window frame store keyed by `window_id`; the UI child `WndProc` reads the latest frame on paint.
+
+The store map is `Arc<Mutex<HashMap<u64, Arc<FrameStore>>>>`; a store is created lazily on its first frame.
+
+### PostMessageW invalidation
+
+The net task never calls GDI; it posts `WM_USER_FRAME`, `WM_USER_WIN_EVENT`, and `WM_USER_RTT` to the controller HWND, which invalidates or resizes the matching child windows.
+
+All GDI work stays on the UI thread.
+
+### GDI blit
+
+Each child window blits its latest frame with GDI `StretchDIBits` as 32bpp `BI_RGB` with a negative `biHeight` (top-down BGRA, matching the pixman readback), stretched to fit the client rect.
+
+A padded server stride is repacked to a tight row before the blit.
+
+### Controller and child windows
+
+The hidden controller HWND owns the message loop and the window manager; every mapped remote toplevel is a child HWND beneath it.
+
+Each toplevel is therefore independently movable, resizable, and closable on the desktop.
+
+### Async orchestration
+
+Frame reception runs on a separate tokio task holding a cloned quinn connection, while the control loop holds the session mutably in a `select!`.
+
+The clone comes from `ViewerSession::connection()`, so `next_frame(&self)` and `send_input(&mut self)` sit on different borrows and do not conflict.

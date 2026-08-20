@@ -386,6 +386,7 @@ fn handshake_and_ping() {
 #[test]
 fn frame_roundtrip() {
     // @lat: [[tests#Streaming#Frame roundtrip]]
+    // @lat: [[tests#Streaming#Per-window frame tagging]]
     let (listen, socket_path, status_rx, shutdown, handle) = spawn_streaming_server();
     let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
     let viewer = connect_viewer(&runtime, listen);
