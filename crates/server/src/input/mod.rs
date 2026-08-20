@@ -49,7 +49,7 @@ impl Default for InputRouter {
 ///
 /// Free function so it can borrow `&mut State` without conflicting with
 /// `InputRouter` (which lives inside `State`).
-pub fn inject(state: &mut State, event: InputEvent, serial: Serial, time: u32) {
+pub fn inject(state: &mut State, window_id: u64, event: InputEvent, serial: Serial, time: u32) {
     match event {
         InputEvent::KeyDown { scancode } => {
             if let Some(keycode) = keymap::scancode_to_keycode(scancode) {
@@ -85,9 +85,17 @@ pub fn inject(state: &mut State, event: InputEvent, serial: Serial, time: u32) {
         }
         InputEvent::PointerMove { x, y } => {
             if let Some(ptr) = state.seat.get_pointer() {
+                // Resolve the target window's surface and pass it as the
+                // pointer focus. Each window is its own coordinate space
+                // (surface origin (0,0)), so the global focus origin is (0,0)
+                // and the event location is surface-local (x, y).
+                let focus = state
+                    .window_manager
+                    .surface_for(window_id)
+                    .map(|surface| (surface.clone(), Point::<f64, Logical>::new(0.0, 0.0)));
                 ptr.motion(
                     state,
-                    None,
+                    focus,
                     &MotionEvent {
                         location: Point::<f64, Logical>::from((x, y)),
                         serial,

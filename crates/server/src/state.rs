@@ -5,7 +5,6 @@
 //! over an optional status channel. The `delegate_*!` macros forward
 //! protocol dispatch to the per-global state fields.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -14,31 +13,22 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use smithay::backend::input::KeyState;
 use smithay::delegate_compositor;
 use smithay::delegate_output;
 use smithay::delegate_seat;
 use smithay::delegate_shm;
 use smithay::delegate_xdg_shell;
-use smithay::input::keyboard::{KeyboardTarget, KeysymHandle, ModifiersState, XkbConfig};
-use smithay::input::pointer::{
-    AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent,
-    GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
-    GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent, PointerTarget, RelativeMotionEvent,
-};
-use smithay::input::touch::{
-    DownEvent, MotionEvent as TouchMotionEvent, OrientationEvent, ShapeEvent, TouchTarget, UpEvent,
-};
+use smithay::input::keyboard::XkbConfig;
+use smithay::input::pointer::CursorImageStatus;
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
-use smithay::utils::{IsAlive, Point, Serial, Size, Transform};
+use smithay::utils::{Point, Serial, Size, Transform};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     BufferAssignment, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes,
     with_states,
 };
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
-use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::shell::xdg::{
     Configure, PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
     XdgToplevelSurfaceData,
@@ -97,153 +87,6 @@ impl std::ops::Deref for ClientState {
     type Target = CompositorClientState;
     fn deref(&self) -> &Self::Target {
         &self.compositor_state
-    }
-}
-
-/// Focus target for the headless seat.
-///
-/// Wraps the object id of a `WlSurface`. No focus is ever set at this
-/// milestone (no rendering or input handling yet); the type exists to
-/// satisfy the seat handler's focus bounds and will be driven by input
-/// injection in a later issue.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SurfaceFocus(pub ObjectId);
-
-impl IsAlive for SurfaceFocus {
-    fn alive(&self) -> bool {
-        true
-    }
-}
-
-impl WaylandFocus for SurfaceFocus {
-    fn wl_surface(&self) -> Option<Cow<'_, WlSurface>> {
-        None
-    }
-}
-
-impl KeyboardTarget<State> for SurfaceFocus {
-    fn enter(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _keys: Vec<KeysymHandle<'_>>,
-        _serial: Serial,
-    ) {
-    }
-    fn leave(&self, _seat: &Seat<State>, _data: &mut State, _serial: Serial) {}
-    fn key(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _key: KeysymHandle<'_>,
-        _state: KeyState,
-        _serial: Serial,
-        _time: u32,
-    ) {
-    }
-    fn modifiers(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _modifiers: ModifiersState,
-        _serial: Serial,
-    ) {
-    }
-}
-
-impl PointerTarget<State> for SurfaceFocus {
-    fn enter(&self, _seat: &Seat<State>, _data: &mut State, _event: &MotionEvent) {}
-    fn motion(&self, _seat: &Seat<State>, _data: &mut State, _event: &MotionEvent) {}
-    fn relative_motion(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &RelativeMotionEvent,
-    ) {
-    }
-    fn button(&self, _seat: &Seat<State>, _data: &mut State, _event: &ButtonEvent) {}
-    fn axis(&self, _seat: &Seat<State>, _data: &mut State, _frame: AxisFrame) {}
-    fn frame(&self, _seat: &Seat<State>, _data: &mut State) {}
-    fn gesture_swipe_begin(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &GestureSwipeBeginEvent,
-    ) {
-    }
-    fn gesture_swipe_update(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &GestureSwipeUpdateEvent,
-    ) {
-    }
-    fn gesture_swipe_end(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &GestureSwipeEndEvent,
-    ) {
-    }
-    fn gesture_pinch_begin(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &GesturePinchBeginEvent,
-    ) {
-    }
-    fn gesture_pinch_update(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &GesturePinchUpdateEvent,
-    ) {
-    }
-    fn gesture_pinch_end(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &GesturePinchEndEvent,
-    ) {
-    }
-    fn gesture_hold_begin(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &GestureHoldBeginEvent,
-    ) {
-    }
-    fn gesture_hold_end(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &GestureHoldEndEvent,
-    ) {
-    }
-    fn leave(&self, _seat: &Seat<State>, _data: &mut State, _serial: Serial, _time: u32) {}
-}
-
-impl TouchTarget<State> for SurfaceFocus {
-    fn down(&self, _seat: &Seat<State>, _data: &mut State, _event: &DownEvent, _seq: Serial) {}
-    fn up(&self, _seat: &Seat<State>, _data: &mut State, _event: &UpEvent, _seq: Serial) {}
-    fn motion(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &TouchMotionEvent,
-        _seq: Serial,
-    ) {
-    }
-    fn frame(&self, _seat: &Seat<State>, _data: &mut State, _seq: Serial) {}
-    fn cancel(&self, _seat: &Seat<State>, _data: &mut State, _seq: Serial) {}
-    fn shape(&self, _seat: &Seat<State>, _data: &mut State, _event: &ShapeEvent, _seq: Serial) {}
-    fn orientation(
-        &self,
-        _seat: &Seat<State>,
-        _data: &mut State,
-        _event: &OrientationEvent,
-        _seq: Serial,
-    ) {
     }
 }
 
@@ -478,9 +321,9 @@ impl State {
     }
 
     /// Inject a network input event into the smithay seat.
-    pub fn inject_input(&mut self, event: InputEvent, serial: Serial, time: u32) {
+    pub fn inject_input(&mut self, window_id: u64, event: InputEvent, serial: Serial, time: u32) {
         self.telemetry.record_input();
-        crate::input::inject(self, event, serial, time);
+        crate::input::inject(self, window_id, event, serial, time);
     }
 
     /// Render the currently committed surfaces offscreen and read the pixels
@@ -644,15 +487,15 @@ impl BufferHandler for State {
 }
 
 impl SeatHandler for State {
-    type KeyboardFocus = SurfaceFocus;
-    type PointerFocus = SurfaceFocus;
-    type TouchFocus = SurfaceFocus;
+    type KeyboardFocus = WlSurface;
+    type PointerFocus = WlSurface;
+    type TouchFocus = WlSurface;
 
     fn seat_state(&mut self) -> &mut SeatState<State> {
         &mut self.seat_state
     }
 
-    fn focus_changed(&mut self, _seat: &Seat<State>, _focused: Option<&SurfaceFocus>) {}
+    fn focus_changed(&mut self, _seat: &Seat<State>, _focused: Option<&WlSurface>) {}
 
     fn cursor_image(&mut self, _seat: &Seat<State>, _image: CursorImageStatus) {}
 }

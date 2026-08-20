@@ -129,13 +129,25 @@ pub fn run(
         let insert = handle.insert_source(comp_bridge.input_rx, move |event, _, state| {
             if let calloop::channel::Event::Msg(cmd) = event {
                 match cmd {
-                    CompositorCommand::Input(event) => {
+                    CompositorCommand::Input { window_id, event } => {
                         let serial = state.input_router.next_serial();
                         let time = state.input_router.now_ms();
-                        state.inject_input(event, serial, time);
+                        state.inject_input(window_id, event, serial, time);
                     }
                     CompositorCommand::SetFocus { window_id } => {
                         state.window_manager.set_focus(window_id);
+                        // Also set keyboard focus on the seat so key events
+                        // reach the surface.
+                        if let Some(surface) = state
+                            .window_manager
+                            .surface_for(window_id)
+                            .map(|s| s.clone())
+                        {
+                            if let Some(kbd) = state.seat.get_keyboard() {
+                                let serial = state.input_router.next_serial();
+                                kbd.set_focus(state, Some(&surface), serial);
+                            }
+                        }
                     }
                     CompositorCommand::ConfigureWindow {
                         window_id,

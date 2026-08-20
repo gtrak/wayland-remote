@@ -266,6 +266,14 @@ impl WindowManager {
         self.windows.get(&window_id).map(|w| &w.surface_id)
     }
 
+    /// The `WlSurface` backing a window, for input focus injection.
+    #[must_use]
+    pub fn surface_for(&self, window_id: u64) -> Option<&WlSurface> {
+        self.windows
+            .get(&window_id)
+            .map(|w| w.toplevel.wl_surface())
+    }
+
     /// The committed (width, height) of a mapped window, if it is tracked.
     #[must_use]
     pub fn window_size(&self, window_id: u64) -> Option<(u32, u32)> {

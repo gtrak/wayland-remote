@@ -702,14 +702,24 @@ keyboard.set_focus(&mut state, Some(&surface), serial);
 
 ### Pointer input injection
 
+**CRITICAL:** `motion` is 3-arg with a `focus: Option<(PointerFocus, Point)>`
+parameter in smithay 0.7. Passing `None` means the pointer is not on any
+surface — button/axis events will go nowhere. Always pass
+`Some((surface, origin))` when the pointer is over a client surface.
+
 ```rust
-use smithay::input::pointer::{MotionEvent, ButtonEvent, AxisFrame, AxisSource, AxisDirection, ButtonState};
+use smithay::input::pointer::{MotionEvent, ButtonEvent, AxisFrame, AxisSource, ButtonState};
 use smithay::utils::{Point, Logical, Serial};
 
-// Absolute motion to (x, y) in surface-local logical coords:
+// Absolute motion to (x, y) in surface-local logical coords.
+// The `focus` parameter is Option<(PointerFocus, Point<f64, Logical>)> where
+// the point is the surface's origin in global compositor space.
+// For a per-window model where each window is its own coordinate space,
+// pass the surface as focus with origin (0,0):
 let pointer = state.seat.get_pointer().unwrap();
 pointer.motion(
     &mut state,
+    Some((surface.clone(), Point::<f64, Logical>::new(0.0, 0.0))),
     &MotionEvent {
         location: Point::<f64, Logical>::from((x, y)),
         serial,

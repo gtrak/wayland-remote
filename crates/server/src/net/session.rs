@@ -247,11 +247,14 @@ pub(crate) async fn handle_connection(
                         let rtt = now_ns().saturating_sub(timestamp_ns);
                         tracing::debug!(rtt_us = rtt / 1000, "session: pong received");
                     }
-                    Ok(Message::Input { event, .. }) => {
-                        // Seat input injection is a later milestone; the
-                        // event is forwarded to the compositor, which logs it.
+                    Ok(Message::Input { window_id, event }) => {
+                        // Forward the input event (with its target window) to
+                        // the compositor, which injects it into the Wayland seat.
                         tracing::debug!(?event, "session: input event");
-                        if input_tx.send(CompositorCommand::Input(event)).is_err() {
+                        if input_tx
+                            .send(CompositorCommand::Input { window_id, event })
+                            .is_err()
+                        {
                             tracing::debug!("session: compositor channel closed");
                             break;
                         }

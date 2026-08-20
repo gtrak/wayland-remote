@@ -43,7 +43,7 @@ pub enum NetCommand {
 #[derive(Debug)]
 pub enum CompositorCommand {
     /// An input event to dispatch into the Wayland seat.
-    Input(InputEvent),
+    Input { window_id: u64, event: InputEvent },
     /// A viewer focus request: activate the given window.
     SetFocus { window_id: u64 },
     /// A viewer resize request: configure the given window to a new size.
