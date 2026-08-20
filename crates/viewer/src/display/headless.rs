@@ -33,8 +33,9 @@ pub fn run_headless(
                     count += 1;
                     total += frame.data.len() as u64;
                     eprintln!(
-                        "headless: frame {} (id {}, {}x{}, {} bytes)",
+                        "headless: frame {} (window {}, id {}, {}x{}, {} bytes)",
                         count,
+                        frame.window_id,
                         frame.frame_id,
                         frame.width,
                         frame.height,

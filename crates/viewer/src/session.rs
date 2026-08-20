@@ -181,9 +181,27 @@ impl ViewerSession {
         })
     }
 
+    /// A cheap clone of the QUIC connection.
+    ///
+    /// `quinn::Connection` is `Clone` (Arc-based) and frame reception only needs
+    /// `&Connection`, so the Win32 viewer spawns the frame-receive loop on its
+    /// own task with this clone while the control loop holds `&mut self`.
+    pub fn connection(&self) -> quinn::Connection {
+        self.conn.clone()
+    }
+
     /// Receive the next frame from a new unidirectional stream.
     pub async fn next_frame(&self) -> anyhow::Result<FrameBuffer> {
-        let mut recv = self.conn.accept_uni().await?;
+        Self::read_frame(&self.conn).await
+    }
+
+    /// Decode the next frame from a new unidirectional stream on `conn`.
+    ///
+    /// Lifted out of [`next_frame`](ViewerSession::next_frame) so the Win32
+    /// viewer can run the frame-receive loop on its own tokio task holding a
+    /// cheap `Connection` clone, while the control loop keeps `&mut ViewerSession`.
+    pub async fn read_frame(conn: &quinn::Connection) -> anyhow::Result<FrameBuffer> {
+        let mut recv = conn.accept_uni().await?;
         let mut header_bytes = [0u8; FRAME_HEADER_SIZE];
         recv.read_exact(&mut header_bytes).await?;
         let header = decode_frame_header(&mut Cursor::new(&header_bytes))?;
@@ -207,6 +225,7 @@ impl ViewerSession {
             stride: header.stride,
             frame_id: header.frame_id,
             timestamp_ns: header.timestamp_ns,
+            window_id: header.window_id,
         })
     }
 
@@ -230,6 +249,22 @@ impl ViewerSession {
         encode_message(&Message::Input { window_id, event }, &mut buf)?;
         self.ctrl_send.write_all(&buf).await?;
         Ok(())
+    }
+
+    /// Encode and send an arbitrary control message (focus/resize/close/ping)
+    /// upstream on the control stream.
+    pub async fn send_control(&mut self, msg: &Message) -> anyhow::Result<()> {
+        let mut buf = Vec::new();
+        encode_message(msg, &mut buf)?;
+        self.ctrl_send.write_all(&buf).await?;
+        Ok(())
+    }
+
+    /// Read one control message from the server (blocks until one arrives or
+    /// the stream closes). The Win32 control loop polls this behind a short
+    /// timeout so the `select!` stays responsive.
+    pub async fn read_control(&mut self) -> anyhow::Result<Message> {
+        read_message(&mut self.ctrl_recv).await
     }
 
     /// Send a Ping and wait for the Pong, returning the RTT in nanoseconds.

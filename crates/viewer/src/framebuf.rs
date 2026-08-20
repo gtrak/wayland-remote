@@ -12,6 +12,7 @@ pub struct FrameBuffer {
     pub stride: u32,
     pub frame_id: u64,
     pub timestamp_ns: u64,
+    pub window_id: u64,
 }
 
 /// Thread-safe frame store with double buffering: the network thread
@@ -42,6 +43,27 @@ impl FrameStore {
             return None;
         }
         self.front.lock().unwrap().clone()
+    }
+
+    /// Clone the front frame without clearing the new-flag.
+    ///
+    /// Used by the Win32 `WM_PAINT` handler to re-read the current frame after
+    /// a resize or uncover (the flag must survive so a later `borrow` still
+    /// reports a pending update).
+    pub fn latest(&self) -> Option<FrameBuffer> {
+        self.front.lock().unwrap().clone()
+    }
+
+    /// The dimensions of the front frame, if any frame has been stored.
+    ///
+    /// Used by input translation to scale client-area pointer coordinates up to
+    /// surface coordinates.
+    pub fn size(&self) -> Option<(u32, u32)> {
+        self.front
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|f| (f.width, f.height))
     }
 }
 

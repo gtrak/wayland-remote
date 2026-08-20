@@ -16,13 +16,36 @@ pub struct ViewerWindow {
 
 pub struct ViewerWindowManager {
     windows: HashMap<u64, ViewerWindow>,
+    #[cfg(windows)]
+    hwnds: HashMap<u64, isize>,
 }
 
 impl ViewerWindowManager {
     pub fn new() -> Self {
         Self {
             windows: HashMap::new(),
+            #[cfg(windows)]
+            hwnds: HashMap::new(),
         }
+    }
+
+    /// Record the HWND backing a window (Windows only). Mutated from
+    /// `display/win.rs`, not from `handle_event` (which stays platform-neutral).
+    #[cfg(windows)]
+    pub fn set_hwnd(&mut self, window_id: u64, hwnd: isize) {
+        self.hwnds.insert(window_id, hwnd);
+    }
+
+    /// Look up the HWND backing a window (Windows only).
+    #[cfg(windows)]
+    pub fn hwnd_for(&self, window_id: u64) -> Option<isize> {
+        self.hwnds.get(&window_id).copied()
+    }
+
+    /// Forget the HWND backing a window (Windows only).
+    #[cfg(windows)]
+    pub fn remove_hwnd(&mut self, window_id: u64) {
+        self.hwnds.remove(&window_id);
     }
 
     pub fn handle_event(&mut self, window_id: u64, event: &WindowEventKind) {
