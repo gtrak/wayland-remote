@@ -211,11 +211,11 @@ impl Dispatch<wl_pointer::WlPointer, PointerData> for XdgClientState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_pointer::Event::Button { state, .. } = event {
-            if state == wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed) {
-                if let Ok(mut click) = data.click.lock() {
-                    *click = Some((0.0, 0.0));
-                }
+        if let wl_pointer::Event::Button { state, .. } = event
+            && state == wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed)
+        {
+            if let Ok(mut click) = data.click.lock() {
+                *click = Some((0.0, 0.0));
             }
         }
     }

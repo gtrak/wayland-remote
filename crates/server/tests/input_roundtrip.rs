@@ -251,12 +251,12 @@ fn pointer_click_round_trip() {
         client
             .dispatch_pending()
             .expect("dispatching pending events should not fail");
-        if let Ok(mut click) = pointer_data.click.lock() {
-            if click.is_some() {
-                *click = None;
-                button_received = true;
-                break;
-            }
+        if let Ok(mut click) = pointer_data.click.lock()
+            && click.is_some()
+        {
+            *click = None;
+            button_received = true;
+            break;
         }
         thread::sleep(Duration::from_millis(50));
     }
