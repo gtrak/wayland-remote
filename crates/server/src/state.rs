@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::{Duration, Instant};
 
 use smithay::backend::input::KeyState;
 use smithay::delegate_compositor;
@@ -262,6 +263,120 @@ pub struct SurfaceInfo {
     pub height: u32,
 }
 
+/// Server-side telemetry counters for observability and the test harness.
+pub struct Telemetry {
+    frames_total: u64,
+    frames_this_second: u64,
+    frame_bytes_total: u64,
+    commits_total: u64,
+    input_events_total: u64,
+    last_input_at: Option<Instant>,
+    last_input_to_commit_ms: Option<u32>,
+    errors_total: u64,
+    second_start: Instant,
+}
+
+/// A cheap-to-copy snapshot of telemetry for logging.
+#[derive(Debug, Clone)]
+pub struct TelemetrySnapshot {
+    pub frames_per_sec: u64,
+    pub frames_total: u64,
+    pub frame_bytes_total: u64,
+    pub commits_total: u64,
+    pub input_events_total: u64,
+    pub last_input_to_commit_ms: Option<u32>,
+    pub errors_total: u64,
+}
+
+impl Telemetry {
+    /// Create a telemetry counter set with all counters zeroed and the
+    /// per-second window starting now.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            frames_total: 0,
+            frames_this_second: 0,
+            frame_bytes_total: 0,
+            commits_total: 0,
+            input_events_total: 0,
+            last_input_at: None,
+            last_input_to_commit_ms: None,
+            errors_total: 0,
+            second_start: Instant::now(),
+        }
+    }
+
+    /// Record a surface commit. If an input event arrived within the last 5
+    /// seconds, capture the input-to-commit latency; the pending input
+    /// timestamp is always cleared so each latency sample pairs one input
+    /// with the next commit.
+    pub fn record_commit(&mut self) {
+        self.commits_total += 1;
+        if let Some(t) = self.last_input_at {
+            let elapsed = t.elapsed();
+            if elapsed < Duration::from_secs(5) {
+                self.last_input_to_commit_ms = Some(elapsed.as_millis() as u32);
+            }
+        }
+        self.last_input_at = None;
+    }
+
+    /// Record a network input event and stamp the time so the next commit
+    /// can measure input-to-commit latency.
+    pub fn record_input(&mut self) {
+        self.input_events_total += 1;
+        self.last_input_at = Some(Instant::now());
+    }
+
+    /// Record a streamed frame of `bytes` payload size.
+    pub fn record_frame(&mut self, bytes: usize) {
+        self.frames_total += 1;
+        self.frames_this_second += 1;
+        self.frame_bytes_total += bytes as u64;
+    }
+
+    /// Record a recoverable error (failed render/snapshot).
+    pub fn record_error(&mut self) {
+        self.errors_total += 1;
+    }
+
+    /// Elapsed time since the per-second window started, for cheap polling
+    /// without mutating the counters.
+    #[must_use]
+    pub fn second_start_elapsed(&self) -> Duration {
+        self.second_start.elapsed()
+    }
+
+    /// Snapshot the cumulative counters. If at least one second has passed
+    /// since the last snapshot, also publish and reset the per-second frame
+    /// rate; otherwise `frames_per_sec` is 0 and the window keeps counting.
+    pub fn snapshot(&mut self) -> TelemetrySnapshot {
+        let frames_per_sec = if self.second_start.elapsed() >= Duration::from_secs(1) {
+            let fps = self.frames_this_second;
+            self.frames_this_second = 0;
+            self.second_start = Instant::now();
+            fps
+        } else {
+            0
+        };
+        TelemetrySnapshot {
+            frames_per_sec,
+            frames_total: self.frames_total,
+            frame_bytes_total: self.frame_bytes_total,
+            commits_total: self.commits_total,
+            input_events_total: self.input_events_total,
+            last_input_to_commit_ms: self.last_input_to_commit_ms,
+            errors_total: self.errors_total,
+        }
+    }
+}
+
+impl Default for Telemetry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// All compositor state: globals, tracked surfaces, and shutdown plumbing.
 pub struct State {
     pub display_handle: DisplayHandle,
@@ -289,6 +404,8 @@ pub struct State {
     pub input_router: crate::input::InputRouter,
     /// Tracks whether a `--snapshot` frame has been written (exactly once).
     pub snapshot_done: bool,
+    /// Server-side telemetry counters for observability and the test harness.
+    pub telemetry: Telemetry,
 }
 
 impl State {
@@ -350,6 +467,7 @@ impl State {
             shutdown,
             input_router: crate::input::InputRouter::new(),
             snapshot_done: false,
+            telemetry: Telemetry::new(),
         })
     }
 
@@ -361,6 +479,7 @@ impl State {
 
     /// Inject a network input event into the smithay seat.
     pub fn inject_input(&mut self, event: InputEvent, serial: Serial, time: u32) {
+        self.telemetry.record_input();
         crate::input::inject(self, event, serial, time);
     }
 
@@ -447,6 +566,7 @@ impl CompositorHandler for State {
                 _ => None,
             }
         });
+        self.telemetry.record_commit();
 
         let id = surface.id();
         let existing = self.surfaces.get(&id).cloned();

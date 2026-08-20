@@ -154,9 +154,13 @@ pub fn run(
                         match state.render_frame() {
                             Ok(frame) => {
                                 let _ = reply.send(frame.clone());
+                                state.telemetry.record_frame(frame.data.len());
                                 push_frame(&bridge_tx, &counter, frame);
                             }
-                            Err(err) => tracing::warn!(?err, "render request failed"),
+                            Err(err) => {
+                                state.telemetry.record_error();
+                                tracing::warn!(?err, "render request failed");
+                            }
                         }
                     }
                 }
@@ -203,10 +207,14 @@ pub fn run(
                     Ok(frame) => {
                         let _ = reply.send(frame.clone());
                         if let Some(tx) = &frame_tx {
+                            state.telemetry.record_frame(frame.data.len());
                             push_frame(tx, &frame_counter, frame);
                         }
                     }
-                    Err(err) => tracing::warn!(?err, "render request failed"),
+                    Err(err) => {
+                        state.telemetry.record_error();
+                        tracing::warn!(?err, "render request failed");
+                    }
                 }
             }
         }
@@ -233,10 +241,31 @@ pub fn run(
         if let Some(tx) = frame_tx.clone() {
             for window_id in state.window_manager.mapped_windows() {
                 match state.render_window(window_id) {
-                    Ok(frame) => push_frame(&tx, &frame_counter, frame),
-                    Err(err) => tracing::debug!(?err, window_id, "per-window render skipped"),
+                    Ok(frame) => {
+                        state.telemetry.record_frame(frame.data.len());
+                        push_frame(&tx, &frame_counter, frame);
+                    }
+                    Err(err) => {
+                        state.telemetry.record_error();
+                        tracing::debug!(?err, window_id, "per-window render skipped");
+                    }
                 }
             }
+        }
+
+        // Emit a telemetry snapshot roughly once per second.
+        if state.telemetry.second_start_elapsed() >= Duration::from_secs(1) {
+            let snap = state.telemetry.snapshot();
+            tracing::info!(
+                fps = snap.frames_per_sec,
+                frames = snap.frames_total,
+                bytes = snap.frame_bytes_total,
+                commits = snap.commits_total,
+                inputs = snap.input_events_total,
+                in2commit = ?snap.last_input_to_commit_ms,
+                errors = snap.errors_total,
+                "telemetry"
+            );
         }
 
         if shutdown.load(Ordering::Relaxed) {

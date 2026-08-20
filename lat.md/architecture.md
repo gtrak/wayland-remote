@@ -18,6 +18,12 @@ Each mapped xdg toplevel renders into its own offscreen pixman target, producing
 
 The compositor loop iterates `WindowManager::mapped_windows()` every tick and runs one render pass per window via `OffscreenRenderer::render_surface`. The resulting frame is tagged with the window's `window_id` on both `FrameHeader` and `FrameBuffer`; that id is the demux key the viewer uses to route frames to its per-window stores. wl_shm buffers import as pixman textures, and readback yields a top-down BGRA buffer with a real (padded) stride. That buffer — unchanged — is what goes on the wire, so GDI can blit it with zero conversion ([[decisions#Decision Log#BGRA Wire Format]]).
 
+## Telemetry
+
+The server keeps lightweight counters on `State` for observability and the test harness: frames streamed, frame bytes, commits, input events, input-to-commit latency, and errors. See [[architecture#Rendering Pipeline]] and [[architecture#Runtime Split]].
+
+`Telemetry` ([[crates/server/src/state.rs#Telemetry]]) is a `pub` field on `State` ([[crates/server/src/state.rs#State]]); `record_commit` ([[crates/server/src/state.rs#Telemetry#record_commit]]) fires in `CompositorHandler::commit`, `record_input` ([[crates/server/src/state.rs#Telemetry#record_input]]) in `State::inject_input`, and `record_frame`/`record_error` at every `push_frame` ([[crates/server/src/lib.rs#push_frame]]) call site in the compositor loop. A `TelemetrySnapshot` ([[crates/server/src/state.rs#TelemetrySnapshot]]) is published via `snapshot` ([[crates/server/src/state.rs#Telemetry#snapshot]]) roughly once per second and emitted as a structured `tracing::info!` line from `run` ([[crates/server/src/lib.rs#run]]); `second_start_elapsed` lets the loop poll the per-second window without mutating the counters.
+
 ## QUIC Session Model
 
 Each connection is one quinn session: a control stream plus one unidirectional stream per frame, with receiver-side skip-stale.
