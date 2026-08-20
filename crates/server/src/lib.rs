@@ -138,15 +138,12 @@ pub fn run(
                         state.window_manager.set_focus(window_id);
                         // Also set keyboard focus on the seat so key events
                         // reach the surface.
-                        if let Some(surface) = state
-                            .window_manager
-                            .surface_for(window_id)
-                            .map(|s| s.clone())
+                        if let Some(surface) =
+                            state.window_manager.surface_for(window_id).cloned()
+                            && let Some(kbd) = state.seat.get_keyboard()
                         {
-                            if let Some(kbd) = state.seat.get_keyboard() {
-                                let serial = state.input_router.next_serial();
-                                kbd.set_focus(state, Some(surface), serial);
-                            }
+                            let serial = state.input_router.next_serial();
+                            kbd.set_focus(state, Some(surface), serial);
                         }
                     }
                     CompositorCommand::ConfigureWindow {
