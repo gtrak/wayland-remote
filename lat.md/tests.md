@@ -85,3 +85,27 @@ A Hello with a wrong protocol version causes the server to close the connection 
 ### Frame coalescing
 
 Frames stream to the viewer with monotonically increasing frame ids.
+
+## Viewer
+
+Viewer client tests: pure-function unit tests for the Win32-to-protocol input translation, plus a loopback QUIC session test against a streaming server.
+
+### Scancode extraction
+
+Scancode and extended-key flag are correctly extracted from Win32 key message lParam.
+
+### Button mapping
+
+Win32 mouse button messages map to Linux BTN_* codes with correct pressed/released state.
+
+### Scroll direction
+
+WM_MOUSEWHEEL delta sign maps to the correct vertical scroll direction.
+
+### Key event construction
+
+Scancodes with the extended flag produce the correct KeyDown/KeyUp events with the 0x100 offset.
+
+### Session handshake
+
+The viewer's QUIC client completes the Hello/Welcome handshake and reports the server's dimensions.

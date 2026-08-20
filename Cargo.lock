@@ -2188,10 +2188,13 @@ dependencies = [
  "anyhow",
  "quinn",
  "rustls",
+ "sha2",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wayland-remote-protocol",
+ "wayland-remote-server",
  "windows-sys 0.61.2",
 ]
 
