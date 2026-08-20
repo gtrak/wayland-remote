@@ -1,5 +1,8 @@
 /target
 
+# drive harness artifacts
+tools/drive/drive-results/
+
 # ── GSD baseline (auto-generated) ──
 .gsd/activity/
 .gsd/runtime/
