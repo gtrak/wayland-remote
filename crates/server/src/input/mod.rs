@@ -102,6 +102,9 @@ pub fn inject(state: &mut State, window_id: u64, event: InputEvent, serial: Seri
                         time,
                     },
                 );
+                // Send a frame to delimit the event group — real toolkit
+                // clients (wl_pointer v5+) buffer events until a frame arrives.
+                ptr.frame(state);
             }
         }
         InputEvent::PointerButton {
@@ -122,6 +125,7 @@ pub fn inject(state: &mut State, window_id: u64, event: InputEvent, serial: Seri
                         state: s,
                     },
                 );
+                ptr.frame(state);
             }
         }
         InputEvent::Axis { dx, dy } => {
@@ -134,6 +138,7 @@ pub fn inject(state: &mut State, window_id: u64, event: InputEvent, serial: Seri
                     frame = frame.value(Axis::Vertical, dy * 15.0);
                 }
                 ptr.axis(state, frame);
+                ptr.frame(state);
             }
         }
     }
