@@ -153,3 +153,5 @@ Pointer input integration tests: the server spawns in-process, a reactive Waylan
 ### Pointer click round-trip
 
 A pointer click injected over QUIC is observed on the bound `wl_pointer`; the client commits a differently-colored buffer and the streamed frame's pixels change from the baseline.
+
+The test binds `wl_pointer` before the toplevel is mapped (before `ack_and_commit`) and dispatches pending events after the bind. If the pointer isn't bound before the click is injected, smithay has no `known_pointers` entry for the client and silently drops button events — this ordering is what previously made the test flaky.

@@ -32,6 +32,7 @@ interface Args {
   click: { x: number; y: number } | null;
   out: string;
   skipBuild: boolean;
+  expectChange: boolean;
   help: boolean;
 }
 
@@ -46,6 +47,8 @@ Options:
   --click x,y           Click coordinates (default: 100,100)
   --out <dir>           Local output dir for PNGs (default: ./drive-results)
   --skip-build          Skip git pull + cargo build on the remote
+  --no-expect-change    Pass without a pixel change (e.g. cursor-sprite clients)
+  --expect-change <bool> Require pixel change (default: true)
   --help, -h            Show this help`;
 
 function fail(msg: string): never {
@@ -64,6 +67,7 @@ function parseArgs(argv: string[]): Args {
     click: { x: 100, y: 100 },
     out: "./drive-results",
     skipBuild: false,
+    expectChange: true,
     help: false,
   };
 
@@ -111,6 +115,14 @@ function parseArgs(argv: string[]): Args {
       case "--skip-build":
         a.skipBuild = true;
         break;
+      case "--no-expect-change":
+        a.expectChange = false;
+        break;
+      case "--expect-change": {
+        const v = next().toLowerCase();
+        a.expectChange = v === "true" || v === "1" || v === "yes";
+        break;
+      }
       case "--help":
       case "-h":
         a.help = true;
@@ -188,7 +200,7 @@ async function main() {
       return;
     }
 
-    const verdict = evaluate(result);
+    const verdict = evaluate(result, a.expectChange);
     const pngs = existsSync(outDir)
       ? readdirSync(outDir).filter((f) => f.endsWith(".png"))
       : [];

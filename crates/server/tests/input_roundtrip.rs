@@ -191,13 +191,19 @@ fn pointer_click_round_trip() {
     // Create the test client, ack configure, and commit a base-color buffer.
     let mut client =
         XdgClient::connect_with_toplevel(&socket_path).expect("xdg test client should connect");
+    // Bind the pointer BEFORE mapping the window, so the server processes
+    // get_pointer during the same dispatch cycle as the ack+commit. If the
+    // pointer isn't bound before the click is injected, smithay has no
+    // known_pointers entry for this client and silently drops button events.
+    let pointer_data = client.bind_pointer();
+    // Flush the get_pointer request and let the server process it.
+    client
+        .dispatch_pending()
+        .expect("dispatch after pointer bind should not fail");
     client
         .ack_and_commit(64, 64, PATTERN)
         .expect("ack + commit should succeed");
     wait_for_count(&status_rx, 1);
-
-    // Bind wl_pointer so the client can receive pointer events.
-    let pointer_data = client.bind_pointer();
 
     // Wait for the window to be created.
     let (window_id, event) = wait_for_window_event(&runtime, &mut viewer, "WindowEvent::Created");
@@ -242,9 +248,9 @@ fn pointer_click_round_trip() {
             .expect("button release should send");
     });
 
-    // Give the server time to inject the input, then poll the client's event
-    // queue (non-blocking) to detect a button press on the bound pointer.
-    thread::sleep(Duration::from_millis(200));
+    // Give the server time to inject the input, dispatch it to the client,
+    // and for the client to process the pointer events.
+    thread::sleep(Duration::from_millis(500));
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut button_received = false;
     while Instant::now() < deadline {

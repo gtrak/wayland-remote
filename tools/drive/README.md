@@ -36,6 +36,8 @@ it first:
     --click x,y           Click coordinates (default: 100,100)
     --out <dir>           Local output dir for PNGs (default: ./drive-results)
     --skip-build          Skip git pull + cargo build
+    --no-expect-change    Pass without a pixel change (e.g. cursor-sprite clients)
+    --expect-change <bool> Require pixel change (default: true)
 
 ## Behavior
 
@@ -48,9 +50,16 @@ it first:
    maps inside that window.
 4. The viewer prints a JSON summary
    (`{"frames":N,"fps":F,"rtt_ns":N,"pixels_changed_at":{...}|null,"window_id":N}`)
-   and writes PNGs to `--out`. The driver passes iff `pixels_changed_at` is
-   non-null, prints the result (and the server log tail on failure), tears
-   down the remote client + server, and exits 0 on pass / 1 on fail.
+   and writes PNGs to `--out`. By default the driver passes iff
+   `pixels_changed_at` is non-null; with `--no-expect-change` it passes if
+   the connection, window creation, and frame streaming succeeded,
+   regardless of pixels. Either way it prints the result (and the server log
+   tail on failure), tears down the remote client + server, and exits 0 on
+   pass / 1 on fail.
 
-Note: until the input fix (issue 05) lands, `pixels_changed_at` will be
-`null` and the driver correctly reports FAIL.
+Note: `weston-clickdot` draws its click feedback via a **cursor sprite**
+(`wl_pointer.set_cursor`), not by re-committing the toplevel surface — and
+the headless server does not composite cursors into streamed frames. So
+`pixels_changed_at` is always `null` for clickdot even when input works. Use
+`--no-expect-change` with it to verify the input pipeline is wired, or use a
+content-changing client (e.g. `weston-flower`).
