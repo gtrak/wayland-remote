@@ -390,6 +390,14 @@ impl CompositorHandler for State {
             .expect("every client is inserted with a ClientState")
     }
 
+    fn new_subsurface(&mut self, surface: &WlSurface, parent: &WlSurface) {
+        tracing::debug!(
+            surface_id = ?surface.id(),
+            parent_id = ?parent.id(),
+            "new_subsurface handler called"
+        );
+    }
+
     fn commit(&mut self, surface: &WlSurface) {
         tracing::debug!(surface_id = ?surface.id(), "surface commit handler called");
         let committed = with_states(surface, |states| {
