@@ -18,6 +18,7 @@ use smithay::delegate_data_device;
 use smithay::delegate_output;
 use smithay::delegate_seat;
 use smithay::delegate_shm;
+use smithay::delegate_text_input_manager;
 use smithay::delegate_viewporter;
 use smithay::delegate_xdg_shell;
 use smithay::input::keyboard::XkbConfig;
@@ -40,6 +41,7 @@ use smithay::wayland::shell::xdg::{
     XdgToplevelSurfaceData,
 };
 use smithay::wayland::shm::{ShmHandler, ShmState, with_buffer_contents};
+use smithay::wayland::text_input::TextInputManagerState;
 use smithay::wayland::viewporter::ViewporterState;
 use wayland_remote_protocol::{Compression, InputEvent};
 use wayland_server::backend::{ClientData, ObjectId};
@@ -241,6 +243,10 @@ pub struct State {
     pub viewporter_state: ViewporterState,
     /// Handles wl_data_device_manager (clipboard / DnD) requests.
     pub data_device_state: DataDeviceState,
+    /// Handles zwp_text_input_v3 requests (IME-aware clients bind this). No IME
+    /// engine is present — the global's presence stops "No text input manager"
+    /// warnings; typing works via the keyboard path.
+    pub text_input_manager_state: TextInputManagerState,
     /// The surface set via `wl_pointer.set_cursor`, if any. Drawn on top of the
     /// focused window at render time.
     pub cursor_surface: Option<WlSurface>,
@@ -279,6 +285,7 @@ impl State {
         let xdg_shell_state = XdgShellState::new::<State>(&display_handle);
         let viewporter_state = ViewporterState::new::<State>(&display_handle);
         let data_device_state = DataDeviceState::new::<State>(&display_handle);
+        let text_input_manager_state = TextInputManagerState::new::<State>(&display_handle);
 
         let mut seat_state = SeatState::<State>::new();
         let mut seat = seat_state.new_wl_seat(&display_handle, "wayland-remote");
@@ -319,6 +326,7 @@ impl State {
             output_manager_state,
             viewporter_state,
             data_device_state,
+            text_input_manager_state,
             cursor_surface: None,
             window_manager: crate::window::WindowManager::new(),
             surfaces: HashMap::new(),
@@ -621,3 +629,4 @@ delegate_output!(State);
 delegate_xdg_shell!(State);
 delegate_viewporter!(State);
 delegate_data_device!(State);
+delegate_text_input_manager!(State);
