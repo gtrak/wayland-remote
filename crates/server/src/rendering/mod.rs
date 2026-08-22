@@ -288,12 +288,10 @@ impl OffscreenRenderer {
         // Import the cursor texture up front too (same borrow constraint as the
         // surface textures above): the `Frame` holds `&mut renderer` for the
         // whole pass, so its import must happen before the pass begins.
-        let mut cursor_tex: Option<(PixmanTexture, Point<i32, Logical>)> = None;
-        if let Some((cursor_surface, pos)) = cursor {
-            if let Some(tex) = self.committed_texture(cursor_surface) {
-                cursor_tex = Some((tex, pos));
-            }
-        }
+        let cursor_tex: Option<(PixmanTexture, Point<i32, Logical>)> = cursor
+            .and_then(|(cursor_surface, pos)| {
+                self.committed_texture(cursor_surface).map(|tex| (tex, pos))
+            });
 
         // Create the offscreen pixel buffer and bind it as the render target.
         let buf_size: Size<i32, BufferCoord> = (w, h).into();
