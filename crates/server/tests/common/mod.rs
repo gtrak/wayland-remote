@@ -9,6 +9,7 @@ use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_buffer::WlBuffer;
@@ -404,6 +405,11 @@ impl XdgClient {
         let sub_surface = self._compositor.create_surface(&qh, ());
         let wl_subsurface = subcompositor.get_subsurface(&sub_surface, &self._surface, &qh, ());
         wl_subsurface.set_position(x, y);
+        // Flush the get_subsurface request so the server processes it before
+        // the attach/commit below.
+        self.conn.flush()?;
+        // Give the server time to process the get_subsurface request.
+        std::thread::sleep(Duration::from_millis(50));
 
         let mut file = tempfile::tempfile()?;
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
