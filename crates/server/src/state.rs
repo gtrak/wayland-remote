@@ -21,14 +21,14 @@ use smithay::delegate_shm;
 use smithay::delegate_viewporter;
 use smithay::delegate_xdg_shell;
 use smithay::input::keyboard::XkbConfig;
-use smithay::input::pointer::CursorImageStatus;
+use smithay::input::pointer::{CursorImageStatus, CursorImageSurfaceData};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
-use smithay::utils::{Point, Serial, Size, Transform};
+use smithay::utils::{Logical, Point, Serial, Size, Transform};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     BufferAssignment, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes,
-    with_states,
+    get_role, with_states,
 };
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::selection::SelectionHandler;
@@ -241,6 +241,9 @@ pub struct State {
     pub viewporter_state: ViewporterState,
     /// Handles wl_data_device_manager (clipboard / DnD) requests.
     pub data_device_state: DataDeviceState,
+    /// The surface set via `wl_pointer.set_cursor`, if any. Drawn on top of the
+    /// focused window at render time.
+    pub cursor_surface: Option<WlSurface>,
     /// Tracks xdg toplevels, window ids, focus, and pending window events.
     pub window_manager: crate::window::WindowManager,
     /// Committed surfaces, keyed by object id, with buffer + layout position.
@@ -316,6 +319,7 @@ impl State {
             output_manager_state,
             viewporter_state,
             data_device_state,
+            cursor_surface: None,
             window_manager: crate::window::WindowManager::new(),
             surfaces: HashMap::new(),
             renderer: None,
@@ -371,11 +375,39 @@ impl State {
             .surface_for(window_id)
             .ok_or_else(|| anyhow::anyhow!("window {window_id} not found"))?
             .clone();
+
+        // Cursor: only draw if a cursor surface is set AND the pointer is currently
+        // over this window's surface. Position is window-local (per-window model has
+        // origin (0,0)), offset by the cursor hotspot. The cursor `WlSurface` is
+        // cloned so it does not immutably borrow `self` while `self.renderer` is
+        // mutably borrowed below.
+        let cursor: Option<(WlSurface, Point<i32, Logical>)> = self
+            .cursor_surface
+            .as_ref()
+            .and_then(|cur| {
+                let ptr = self.seat.get_pointer()?;
+                let focus_id = ptr.current_focus()?.id();
+                if focus_id != surface.id() {
+                    return None;
+                }
+                let loc = ptr.current_location();
+                let hotspot = with_states(cur, |s| {
+                    s.data_map
+                        .get::<CursorImageSurfaceData>()
+                        .map(|d| d.lock().unwrap().hotspot)
+                        .unwrap_or_default()
+                });
+                let x = (loc.x - hotspot.x as f64).round() as i32;
+                let y = (loc.y - hotspot.y as f64).round() as i32;
+                Some((cur.clone(), Point::new(x, y)))
+            });
+
         let renderer = self
             .renderer
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("no offscreen renderer configured"))?;
-        let mut frame = renderer.render_window_surface(&surface, width, height)?;
+        let cursor_ref = cursor.as_ref().map(|(s, p)| (s, *p));
+        let mut frame = renderer.render_window_surface(&surface, width, height, cursor_ref)?;
         frame.window_id = window_id;
         Ok(frame)
     }
@@ -400,6 +432,11 @@ impl CompositorHandler for State {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        // The cursor surface is drawn explicitly on top of the focused window at
+        // render time; skip tiling it into the surface map.
+        if get_role(surface) == Some("cursor_image") {
+            return;
+        }
         let committed = with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             let attrs = guard.current();
@@ -477,6 +514,15 @@ impl CompositorHandler for State {
         if self.surfaces.remove(&surface.id()).is_some() {
             self.report_surface_count();
         }
+        // Clear the cursor surface if the destroyed surface was the cursor.
+        if self
+            .cursor_surface
+            .as_ref()
+            .map(|s| s.id())
+            .is_some_and(|id| id == surface.id())
+        {
+            self.cursor_surface = None;
+        }
     }
 }
 
@@ -504,7 +550,14 @@ impl SeatHandler for State {
 
     fn focus_changed(&mut self, _seat: &Seat<State>, _focused: Option<&WlSurface>) {}
 
-    fn cursor_image(&mut self, _seat: &Seat<State>, _image: CursorImageStatus) {}
+    fn cursor_image(&mut self, _seat: &Seat<State>, image: CursorImageStatus) {
+        // Only `Surface` carries a drawable cursor; `Hidden`/`Named` clear it
+        // (no cursor theme in the headless MVP).
+        self.cursor_surface = match image {
+            CursorImageStatus::Surface(s) => Some(s),
+            CursorImageStatus::Hidden | CursorImageStatus::Named(_) => None,
+        };
+    }
 }
 
 impl OutputHandler for State {}

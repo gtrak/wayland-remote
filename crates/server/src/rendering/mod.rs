@@ -265,6 +265,7 @@ impl OffscreenRenderer {
         root: &WlSurface,
         width: u32,
         height: u32,
+        cursor: Option<(&WlSurface, Point<i32, Logical>)>,
     ) -> anyhow::Result<FrameBuffer> {
         let w = width as i32;
         let h = height as i32;
@@ -281,6 +282,16 @@ impl OffscreenRenderer {
         for (surface, offset) in &placed {
             if let Some(texture) = self.committed_texture(surface) {
                 textures.push((texture, offset.x, offset.y));
+            }
+        }
+
+        // Import the cursor texture up front too (same borrow constraint as the
+        // surface textures above): the `Frame` holds `&mut renderer` for the
+        // whole pass, so its import must happen before the pass begins.
+        let mut cursor_tex: Option<(PixmanTexture, Point<i32, Logical>)> = None;
+        if let Some((cursor_surface, pos)) = cursor {
+            if let Some(tex) = self.committed_texture(cursor_surface) {
+                cursor_tex = Some((tex, pos));
             }
         }
 
@@ -313,6 +324,23 @@ impl OffscreenRenderer {
                 1.0, // output_scale
                 Transform::Normal,
                 &[full_tex],
+                &[],
+                1.0, // alpha
+            )?;
+        }
+
+        // Draw the pointer cursor on top of the window content, if present.
+        if let Some((tex, pos)) = &cursor_tex {
+            let csize = tex.size();
+            let full_cursor: Rectangle<i32, Physical> =
+                Rectangle::new(Point::new(0, 0), Size::new(csize.w, csize.h));
+            frame.render_texture_at(
+                tex,
+                Point::new(pos.x, pos.y),
+                1,   // texture_scale
+                1.0, // output_scale
+                Transform::Normal,
+                &[full_cursor],
                 &[],
                 1.0, // alpha
             )?;
