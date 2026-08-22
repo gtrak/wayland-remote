@@ -10,6 +10,7 @@ pub mod net;
 pub mod rendering;
 pub mod state;
 pub mod window;
+pub mod wl_shell;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

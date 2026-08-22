@@ -47,10 +47,13 @@ use wayland_remote_protocol::{Compression, InputEvent};
 use wayland_server::backend::{ClientData, ObjectId};
 use wayland_server::protocol::wl_buffer::WlBuffer;
 use wayland_server::protocol::wl_seat;
+use wayland_server::protocol::wl_shell;
+use wayland_server::protocol::wl_shell_surface;
 use wayland_server::protocol::wl_surface::WlSurface;
-use wayland_server::{Client, DisplayHandle, Resource};
+use wayland_server::{Client, DisplayHandle, Resource, delegate_dispatch, delegate_global_dispatch};
 
 use crate::rendering::{FrameBuffer, OffscreenRenderer, RenderRequest};
+use crate::wl_shell::WlShellState;
 
 /// Configuration for the headless compositor.
 #[derive(Clone, Debug)]
@@ -243,6 +246,9 @@ pub struct State {
     pub viewporter_state: ViewporterState,
     /// Handles wl_data_device_manager (clipboard / DnD) requests.
     pub data_device_state: DataDeviceState,
+    /// Handles legacy wl_shell requests (older clients map toplevels via
+    /// this deprecated global).
+    pub wl_shell_state: WlShellState,
     /// Handles zwp_text_input_v3 requests (IME-aware clients bind this). No IME
     /// engine is present — the global's presence stops "No text input manager"
     /// warnings; typing works via the keyboard path.
@@ -286,6 +292,7 @@ impl State {
         let viewporter_state = ViewporterState::new::<State>(&display_handle);
         let data_device_state = DataDeviceState::new::<State>(&display_handle);
         let text_input_manager_state = TextInputManagerState::new::<State>(&display_handle);
+        let wl_shell_state = WlShellState::new(&display_handle);
 
         let mut seat_state = SeatState::<State>::new();
         let mut seat = seat_state.new_wl_seat(&display_handle, "wayland-remote");
@@ -326,6 +333,7 @@ impl State {
             output_manager_state,
             viewporter_state,
             data_device_state,
+            wl_shell_state,
             text_input_manager_state,
             cursor_surface: None,
             window_manager: crate::window::WindowManager::new(),
@@ -531,6 +539,11 @@ impl CompositorHandler for State {
         {
             self.cursor_surface = None;
         }
+        // A tracked window dies with its surface. For xdg toplevels this is
+        // usually a no-op (toplevel_destroyed already removed it); for
+        // legacy wl_shell windows this is the destruction path (the shell
+        // surface object has no independent lifetime).
+        self.window_manager.destroy(surface);
     }
 }
 
@@ -601,7 +614,7 @@ impl XdgShellHandler for State {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        self.window_manager.destroy(&surface);
+        self.window_manager.destroy(surface.wl_surface());
     }
 
     fn ack_configure(&mut self, surface: WlSurface, _configure: Configure) {
@@ -630,3 +643,12 @@ delegate_xdg_shell!(State);
 delegate_viewporter!(State);
 delegate_data_device!(State);
 delegate_text_input_manager!(State);
+
+// Legacy wl_shell (hand-rolled state in crate::wl_shell).
+delegate_global_dispatch!(State: [wl_shell::WlShell: ()] => crate::wl_shell::WlShellState);
+delegate_dispatch!(State: [wl_shell::WlShell: ()] => crate::wl_shell::WlShellState);
+delegate_dispatch!(
+    State: [
+        wl_shell_surface::WlShellSurface: crate::wl_shell::WlShellSurfaceData
+    ] => crate::wl_shell::WlShellState
+);
