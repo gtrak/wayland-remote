@@ -30,6 +30,8 @@ Injected pointer/keyboard events reach client surfaces via real smithay focus ty
 
 The seat's focus types are `WlSurface` (smithay provides `PointerTarget<D> for WlSurface` / `KeyboardTarget<D> for WlSurface` that forward protocol events); a previous `SurfaceFocus` stub was removed. `window_id` travels with each `Message::Input` through the bridge (`CompositorCommand::Input { window_id, event }`) so `inject` ([[crates/server/src/input/mod.rs#inject]]) can resolve the target surface via `WindowManager::surface_for` ([[crates/server/src/window.rs#WindowManager#surface_for]]) and pass `Some((surface, (0,0)))` as the pointer focus to `ptr.motion` — the per-window model treats each window as its own coordinate space with origin (0,0). A `ptr.frame()` follows every pointer event group so real toolkit clients (wl_pointer v5+) that buffer events until a frame actually process them. `SetFocus` also calls `kbd.set_focus` on the resolved surface so keyboard input reaches it.
 
+The server advertises `wl_data_device_manager` (via `DataDeviceState` on `State`). GTK 3.24+ treats this as a hard precondition for binding `wl_seat` — without it, GTK never binds the seat, never gets a keyboard, and fails window activation and popups.
+
 ## QUIC Session Model
 
 Each connection is one quinn session: a control stream plus one unidirectional stream per frame, with receiver-side skip-stale.
