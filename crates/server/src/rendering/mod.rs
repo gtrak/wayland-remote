@@ -275,6 +275,13 @@ impl OffscreenRenderer {
                 textures.push((texture, offset.x, offset.y));
             }
         }
+        tracing::debug!(
+            surfaces = placed.len(),
+            textures = textures.len(),
+            width,
+            height,
+            "render_window_surface: collected",
+        );
 
         // Create the offscreen pixel buffer and bind it as the render target.
         let buf_size: Size<i32, BufferCoord> = (w, h).into();
