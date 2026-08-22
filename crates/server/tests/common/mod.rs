@@ -19,6 +19,7 @@ use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
+use wayland_client::protocol::wl_subcompositor::WlSubcompositor;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
 use wayland_protocols::xdg::shell::client::xdg_surface::{self, XdgSurface};
@@ -173,6 +174,7 @@ wayland_client::delegate_noop!(XdgClientState: WlBuffer);
 wayland_client::delegate_noop!(XdgClientState: ignore WlSurface);
 wayland_client::delegate_noop!(XdgClientState: ignore WlOutput);
 wayland_client::delegate_noop!(XdgClientState: ignore WlSeat);
+wayland_client::delegate_noop!(XdgClientState: ignore WlSubcompositor);
 wayland_client::delegate_noop!(XdgClientState: ignore XdgWmBase);
 wayland_client::delegate_noop!(XdgClientState: ignore XdgToplevel);
 impl Dispatch<XdgSurface, ()> for XdgClientState {
@@ -236,6 +238,8 @@ pub struct XdgClient {
     _buffers: Vec<WlBuffer>,
     _seat: WlSeat,
     _pointer: Option<wl_pointer::WlPointer>,
+    _subcompositor: Option<WlSubcompositor>,
+    _subsurfaces: Vec<WlSurface>,
 }
 
 impl XdgClient {
@@ -255,6 +259,7 @@ impl XdgClient {
         let shm: WlShm = globals.bind(&qh, 1..=1, ())?;
         let wm_base: XdgWmBase = globals.bind(&qh, 1..=6, ())?;
         let seat: WlSeat = globals.bind(&qh, 1..=7, ())?;
+        let subcompositor: WlSubcompositor = globals.bind(&qh, 1..=1, ())?;
         let surface = compositor.create_surface(&qh, ());
         let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
         let toplevel = xdg_surface.get_toplevel(&qh, ());
@@ -273,6 +278,8 @@ impl XdgClient {
             _buffers: Vec::new(),
             _seat: seat,
             _pointer: None,
+            _subcompositor: Some(subcompositor),
+            _subsurfaces: Vec::new(),
         })
     }
 
@@ -372,6 +379,58 @@ impl XdgClient {
     pub fn destroy_toplevel(&mut self) -> anyhow::Result<()> {
         self.toplevel.destroy();
         self.conn.flush()?;
+        Ok(())
+    }
+
+    /// Create a subsurface parented to the toplevel surface, position it at
+    /// `(x, y)`, attach a `width`x`height` ARGB8888 buffer filled with `color`,
+    /// and commit. The subsurface is kept alive for the lifetime of the client.
+    pub fn create_subsurface(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        color: u32,
+    ) -> anyhow::Result<()> {
+        let qh = self._queue.handle();
+        let subcompositor = self
+            ._subcompositor
+            .as_ref()
+            .expect("subcompositor should be bound");
+
+        let sub_surface = self._compositor.create_surface(&qh, ());
+        subcompositor.get_subsurface(&sub_surface, &self._surface, &qh, ());
+        sub_surface.set_position(x, y);
+
+        let mut file = tempfile::tempfile()?;
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        for _ in 0..(width * height) {
+            pixels.extend_from_slice(&color.to_ne_bytes());
+        }
+        file.write_all(&pixels)?;
+        file.seek(SeekFrom::Start(0))?;
+
+        let pool = self
+            ._shm
+            .create_pool(file.as_fd(), (width * height * 4) as i32, &qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            width as i32,
+            height as i32,
+            (width * 4) as i32,
+            wl_shm::Format::Argb8888,
+            &qh,
+            (),
+        );
+
+        sub_surface.attach(Some(&buffer), 0, 0);
+        sub_surface.commit();
+        self.conn.flush()?;
+
+        self._pools.push(pool);
+        self._buffers.push(buffer);
+        self._subsurfaces.push(sub_surface);
         Ok(())
     }
 }

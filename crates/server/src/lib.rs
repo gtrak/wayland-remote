@@ -158,20 +158,32 @@ pub fn run(
                     CompositorCommand::CloseWindow { window_id } => {
                         state.window_manager.close_window(window_id);
                     }
-                    CompositorCommand::RenderRequest(req) => {
-                        let RenderRequest::Render { reply } = req;
-                        match state.render_frame() {
-                            Ok(frame) => {
-                                let _ = reply.send(frame.clone());
-                                state.telemetry.record_frame(frame.data.len());
-                                push_frame(&bridge_tx, &counter, frame);
-                            }
-                            Err(err) => {
-                                state.telemetry.record_error();
-                                tracing::warn!(?err, "render request failed");
+                    CompositorCommand::RenderRequest(req) => match req {
+                        RenderRequest::Render { reply } => {
+                            match state.render_frame() {
+                                Ok(frame) => {
+                                    let _ = reply.send(frame.clone());
+                                    state.telemetry.record_frame(frame.data.len());
+                                    push_frame(&bridge_tx, &counter, frame);
+                                }
+                                Err(err) => {
+                                    state.telemetry.record_error();
+                                    tracing::warn!(?err, "render request failed");
+                                }
                             }
                         }
-                    }
+                        RenderRequest::RenderWindow { window_id, reply } => {
+                            match state.render_window(window_id) {
+                                Ok(frame) => {
+                                    let _ = reply.send(frame);
+                                }
+                                Err(err) => {
+                                    state.telemetry.record_error();
+                                    tracing::warn!(?err, window_id, "render window request failed");
+                                }
+                            }
+                        }
+                    },
                 }
             }
         });

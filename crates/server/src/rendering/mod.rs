@@ -74,6 +74,14 @@ pub enum RenderRequest {
         /// Reply channel carrying the rendered [`FrameBuffer`] back to the caller.
         reply: Sender<FrameBuffer>,
     },
+    /// Render a single mapped window's subsurface tree and send the result
+    /// over `reply`.
+    RenderWindow {
+        /// The window to render.
+        window_id: u64,
+        /// Reply channel carrying the rendered [`FrameBuffer`] back to the caller.
+        reply: Sender<FrameBuffer>,
+    },
 }
 
 /// Renders committed client surfaces offscreen with the pixman software renderer.
