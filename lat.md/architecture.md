@@ -34,6 +34,14 @@ The seat's focus types are `WlSurface` (smithay provides `PointerTarget<D> for W
 
 The server advertises `wl_data_device_manager` (via `DataDeviceState` on `State`). GTK 3.24+ treats this as a hard precondition for binding `wl_seat` — without it, GTK never binds the seat, never gets a keyboard, and fails window activation and popups.
 
+## Compositor Globals
+
+`State` advertises a fixed set of Wayland globals so a range of clients (xdg, legacy, IME-aware) can bind and map.
+
+The global set is: `wl_compositor` + `wl_subcompositor` (`CompositorState`), `wl_shm` (`ShmState`), `xdg_wm_base` (`XdgShellState`), `wp_viewporter` (`ViewporterState`), `wl_data_device_manager` (`DataDeviceState`), `zwp_text_input_v3` (`TextInputManagerState`), legacy `wl_shell` (hand-rolled `WlShellState`), plus `wl_seat` and `wl_output`. `zwp_text_input_v3` needs no handler trait — `TextInputManagerState` only requires `SeatHandler` (already implemented); it advertises the global and tracks focus, but no text flows without a `zwp_input_method_v2` instance (typing works via the keyboard path).
+
+The legacy `wl_shell` global is hand-rolled in `[[crates/server/src/wl_shell.rs]]` because smithay 0.7 ships no legacy shell support. `WindowManager::Window` carries a `ShellKind` (`Xdg(ToplevelSurface)` / `Legacy(WlShellSurface)`) plus a shared `WlSurface`; xdg-only operations (configure, close, activation) match on the variant. Legacy toplevels register on `set_toplevel`, get a size-hint `configure`, and map on first buffer commit — pre-acked since that protocol has no `ack_configure`.
+
 ## QUIC Session Model
 
 Each connection is one quinn session: a control stream plus one unidirectional stream per frame, with receiver-side skip-stale.

@@ -932,3 +932,78 @@ import ALL textures before `Renderer::render(&mut self, ...)`, because the
 returned `Frame` holds `&mut renderer` for the whole pass. `Frame::finish(self)`
 consumes the frame and releases the borrow; readback
 (`copy_framebuffer`/`map_texture`, both `&self`) must come after that.
+
+## Additional globals (Plan 006/07 — data_device, text_input, wl_shell, cursor)
+
+### wl_data_device_manager (required by GTK before wl_seat binding)
+
+`DataDeviceState::new::<D>(&dh)` from `smithay::wayland::selection::data_device`.
+Requires on `D`: `SelectionHandler` (assoc `type SelectionUserData = ()`),
+`ClientDndGrabHandler`, `ServerDndGrabHandler` (both empty default impls), and
+`DataDeviceHandler` (one required fn: `fn data_device_state(&self) -> &DataDeviceState`).
+`delegate_data_device!(State);` at file bottom. **Why:** GTK 3.24+ posts a
+deferred `wl_seat` bind closure that only fires once BOTH `wl_compositor` AND
+`wl_data_device_manager` are known. Without it GTK never binds the seat →
+`gdk_seat_get_keyboard` CRITICAL, no activation/popups/keyboard. Verified:
+adding it makes GTK bind `wl_seat` and `Gtk.init_check()` return True.
+
+### zwp_text_input_v3 (no handler trait)
+
+`TextInputManagerState::new::<D>(&dh)` from `smithay::wayland::text_input` +
+`delegate_text_input_manager!(State);`. **No handler trait, no assoc type** —
+`TextInputManagerState` implements all dispatches itself; the only bound on `D`
+is `SeatHandler` (already impl'd). Focus follows keyboard focus automatically
+(`KeyboardTarget<WlSurface>::enter/leave` calls `seat.text_input().set_focus`).
+**Gotcha:** all text-input requests are dropped unless a `zwp_input_method_v2`
+instance exists (`text_input_handle.rs` — `if !data.input_method_handle.has_instance()
+{ return; }`). So this global advertises + tracks focus but no text flows without
+the input-method v2 global (`InputMethodManagerState` + `InputMethodHandler`, 4
+required methods). Typing works via the keyboard path regardless.
+
+### wl_shell (legacy — NOT in smithay 0.7, hand-roll it)
+
+smithay 0.7 has **no** legacy shell (no `ShellState`/`ShellHandler`/
+`delegate_shell!`; `src/wayland/shell/` is only kde/wlr_layer/xdg). Hand-roll
+from `wayland_server::protocol::wl_shell::{WlShell}` and
+`wayland_server::protocol::wl_shell_surface::{WlShellSurface, Resize}`.
+- `WlShell::Request` is `#[non_exhaustive]` with ONE variant `GetShellSurface {
+  id: New<WlShellSurface>, surface: WlSurface }` → use `if let` (clippy
+  `single_match`), init `WlShellSurfaceData { surface }`.
+- `WlShellSurface::Request` is `#[non_exhaustive]` with many variants; the map
+  path is `SetToplevel | SetFullscreen{..} | SetMaximized{..}` → register the
+  window + `resource.configure(Resize::empty(), w, h)`. `SetTitle { title }` →
+  set title. Ignore `Move`/`Resize`/`SetPopup`/`SetTransient`/`SetClass`/`Pong`
+  (needs a `_ => {}` wildcard arm).
+- `WlShellSurface::configure(&self, edges: Resize, width: i32, height: i32)` is
+  the size-hint (legacy has NO ack_configure; the client may ignore it). Map on
+  the surface's first buffer commit (reuse `WindowManager::on_commit`; pre-set
+  `acked: true` for legacy since there's no ack).
+- **`ToplevelSurface::wl_surface()` returns `&WlSurface` (a borrow)** — clone it
+  to an owned `WlSurface` before moving the `ToplevelSurface` into a struct
+  (E0505 otherwise).
+- Delegate with wayland-server's primitives (re-exported by smithay, or direct
+  `use wayland_server::{delegate_dispatch, delegate_global_dispatch};` since
+  `wayland-server` is a direct dep): `delegate_global_dispatch!(State:
+  [wl_shell::WlShell: ()] => WlShellState);` + two `delegate_dispatch!`s
+  (`WlShell: ()`, `WlShellSurface: WlShellSurfaceData`).
+- **Destruction:** `wayland-backend` does NOT cascade-destroy — killing the
+  `wl_surface` does NOT auto-destroy the `wl_shell_surface`. Clean up the window
+  in `CompositorHandler::destroyed` (fires on surface death); `destroy` must be
+  idempotent (xdg `toplevel_destroyed` also fires, in either order).
+- `Dispatch::destroyed` takes `backend::ClientId` (NOT `&Client`).
+- `DisplayHandle::create_global::<State, WlShell, ()>(1, ())` — concrete `State`
+  works (single state type).
+
+### Pointer cursor (set_cursor) rendering
+
+`CursorImageStatus` (smithay::input::pointer): `Surface(WlSurface)`, `Hidden`,
+`Named(CursorIcon)`. `SeatHandler::cursor_image(&mut self, seat, image)` stores
+the `Surface(s)` variant on `State`. The **hotspot** is on the cursor surface's
+`data_map` as `CursorImageSurfaceData = Mutex<CursorImageAttributes { hotspot:
+Point<i32, Logical> }>` (written by `set_cursor` before the handler fires).
+Pointer position: `self.seat.get_pointer()` → `PointerHandle::current_location()
+-> Point<f64, Logical>` (== window-local in the per-window origin-(0,0) model)
+and `current_focus() -> Option<WlSurface>` (only draw over the focused window).
+Draw position = `current_location() - hotspot`. Exclude the cursor from surface
+tiling in `commit` via `smithay::wayland::compositor::get_role(surface) ==
+Some("cursor_image")`. Clear `State.cursor_surface` in `destroyed`.
