@@ -391,6 +391,7 @@ impl CompositorHandler for State {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        tracing::debug!(surface_id = ?surface.id(), "surface commit handler called");
         let committed = with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             let attrs = guard.current();
