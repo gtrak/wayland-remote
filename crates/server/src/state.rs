@@ -14,6 +14,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use smithay::delegate_compositor;
+use smithay::delegate_data_device;
 use smithay::delegate_output;
 use smithay::delegate_seat;
 use smithay::delegate_shm;
@@ -30,6 +31,10 @@ use smithay::wayland::compositor::{
     with_states,
 };
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
+use smithay::wayland::selection::SelectionHandler;
+use smithay::wayland::selection::data_device::{
+    ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
+};
 use smithay::wayland::shell::xdg::{
     Configure, PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
     XdgToplevelSurfaceData,
@@ -234,6 +239,8 @@ pub struct State {
     pub output_manager_state: OutputManagerState,
     /// Handles wp_viewporter (surface cropping/scaling) requests.
     pub viewporter_state: ViewporterState,
+    /// Handles wl_data_device_manager (clipboard / DnD) requests.
+    pub data_device_state: DataDeviceState,
     /// Tracks xdg toplevels, window ids, focus, and pending window events.
     pub window_manager: crate::window::WindowManager,
     /// Committed surfaces, keyed by object id, with buffer + layout position.
@@ -268,6 +275,7 @@ impl State {
         let shm_state = ShmState::new::<State>(&display_handle, vec![]);
         let xdg_shell_state = XdgShellState::new::<State>(&display_handle);
         let viewporter_state = ViewporterState::new::<State>(&display_handle);
+        let data_device_state = DataDeviceState::new::<State>(&display_handle);
 
         let mut seat_state = SeatState::<State>::new();
         let mut seat = seat_state.new_wl_seat(&display_handle, "wayland-remote");
@@ -307,6 +315,7 @@ impl State {
             output,
             output_manager_state,
             viewporter_state,
+            data_device_state,
             window_manager: crate::window::WindowManager::new(),
             surfaces: HashMap::new(),
             renderer: None,
@@ -539,9 +548,23 @@ impl XdgShellHandler for State {
     }
 }
 
+impl SelectionHandler for State {
+    type SelectionUserData = ();
+}
+
+impl ClientDndGrabHandler for State {}
+impl ServerDndGrabHandler for State {}
+
+impl DataDeviceHandler for State {
+    fn data_device_state(&self) -> &DataDeviceState {
+        &self.data_device_state
+    }
+}
+
 delegate_compositor!(State);
 delegate_shm!(State);
 delegate_seat!(State);
 delegate_output!(State);
 delegate_xdg_shell!(State);
 delegate_viewporter!(State);
+delegate_data_device!(State);
