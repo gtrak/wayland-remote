@@ -73,13 +73,12 @@ fn spawn_server() -> (
 /// Poll the status channel until the reported surface count equals
 /// `expected`, failing after a 5 s deadline.
 fn wait_for_count(rx: &Receiver<usize>, expected: usize) {
-    let deadline = Instant::now() + Duration::from_secs(5);
     while let Ok(count) = rx.recv_timeout(Duration::from_millis(500)) {
         if count == expected {
             return;
         }
     }
-    panic!("surface count did not reach {expected} by 5s deadline");
+    panic!("surface count did not reach {expected}");
 }
 
 /// Signal shutdown and join the server thread, asserting a clean exit.
