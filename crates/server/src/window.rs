@@ -81,7 +81,7 @@ impl WindowManager {
     /// The window is not mapped yet: mapping happens on the first commit
     /// after the client has acked its initial configure.
     pub fn register(&mut self, toplevel: ToplevelSurface) {
-        let surface = toplevel.wl_surface();
+        let surface = toplevel.wl_surface().clone();
         let id = surface.id();
         let window_id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.windows.insert(
@@ -89,7 +89,7 @@ impl WindowManager {
             Window {
                 window_id,
                 kind: ShellKind::Xdg(toplevel),
-                surface: surface.clone(),
+                surface,
                 surface_id: id.clone(),
                 title: String::new(),
                 width: 0,
