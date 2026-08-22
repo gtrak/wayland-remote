@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use common::{XdgClient, argb_to_bgra};
+use common::XdgClient;
 use wayland_remote_server::rendering::{FrameBuffer, RenderRequest};
 use wayland_remote_server::run;
 use wayland_remote_server::state::Config;
