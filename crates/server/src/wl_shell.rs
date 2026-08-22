@@ -56,21 +56,18 @@ impl Dispatch<WlShell, (), State> for WlShellState {
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, State>,
     ) {
-        match request {
-            wl_shell::Request::GetShellSurface { id, surface } => {
-                // A wl_surface may only take one role. Taking the shell
-                // surface role here rejects double-role clients (e.g. an
-                // xdg toplevel reusing the surface) with the protocol error.
-                if smithay::wayland::compositor::give_role(&surface, "shell_surface").is_err() {
-                    resource.post_error(
-                        wl_shell::Error::Role,
-                        "wl_surface already has another role",
-                    );
-                    return;
-                }
-                data_init.init(id, WlShellSurfaceData { surface });
+        if let wl_shell::Request::GetShellSurface { id, surface } = request {
+            // A wl_surface may only take one role. Taking the shell
+            // surface role here rejects double-role clients (e.g. an
+            // xdg toplevel reusing the surface) with the protocol error.
+            if smithay::wayland::compositor::give_role(&surface, "shell_surface").is_err() {
+                resource.post_error(
+                    wl_shell::Error::Role,
+                    "wl_surface already has another role",
+                );
+                return;
             }
-            _ => {}
+            data_init.init(id, WlShellSurfaceData { surface });
         }
     }
 }
