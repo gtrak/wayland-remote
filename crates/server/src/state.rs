@@ -17,6 +17,7 @@ use smithay::delegate_compositor;
 use smithay::delegate_output;
 use smithay::delegate_seat;
 use smithay::delegate_shm;
+use smithay::delegate_viewporter;
 use smithay::delegate_xdg_shell;
 use smithay::input::keyboard::XkbConfig;
 use smithay::input::pointer::CursorImageStatus;
@@ -34,6 +35,7 @@ use smithay::wayland::shell::xdg::{
     XdgToplevelSurfaceData,
 };
 use smithay::wayland::shm::{ShmHandler, ShmState, with_buffer_contents};
+use smithay::wayland::viewporter::ViewporterState;
 use wayland_remote_protocol::{Compression, InputEvent};
 use wayland_server::backend::{ClientData, ObjectId};
 use wayland_server::protocol::wl_buffer::WlBuffer;
@@ -230,6 +232,8 @@ pub struct State {
     pub seat: Seat<State>,
     pub output: Output,
     pub output_manager_state: OutputManagerState,
+    /// Handles wp_viewporter (surface cropping/scaling) requests.
+    pub viewporter_state: ViewporterState,
     /// Tracks xdg toplevels, window ids, focus, and pending window events.
     pub window_manager: crate::window::WindowManager,
     /// Committed surfaces, keyed by object id, with buffer + layout position.
@@ -263,6 +267,7 @@ impl State {
         let compositor_state = CompositorState::new::<State>(&display_handle);
         let shm_state = ShmState::new::<State>(&display_handle, vec![]);
         let xdg_shell_state = XdgShellState::new::<State>(&display_handle);
+        let viewporter_state = ViewporterState::new::<State>(&display_handle);
 
         let mut seat_state = SeatState::<State>::new();
         let mut seat = seat_state.new_wl_seat(&display_handle, "wayland-remote");
@@ -301,6 +306,7 @@ impl State {
             seat,
             output,
             output_manager_state,
+            viewporter_state,
             window_manager: crate::window::WindowManager::new(),
             surfaces: HashMap::new(),
             renderer: None,
@@ -345,30 +351,22 @@ impl State {
         renderer.render(&surfaces)
     }
 
-    /// Render a single mapped window's committed buffer at its current size.
+    /// Render a single mapped window's subsurface tree at its current size.
     pub fn render_window(&mut self, window_id: u64) -> anyhow::Result<FrameBuffer> {
         let (width, height) = self
             .window_manager
             .window_size(window_id)
             .ok_or_else(|| anyhow::anyhow!("window {window_id} not mapped"))?;
-        let surface_id = self
+        let surface = self
             .window_manager
-            .surface_id_for(window_id)
+            .surface_for(window_id)
             .ok_or_else(|| anyhow::anyhow!("window {window_id} not found"))?
             .clone();
-        let info = self
-            .surfaces
-            .get(&surface_id)
-            .ok_or_else(|| anyhow::anyhow!("no surface info for window {window_id}"))?;
-        let buffer = info
-            .buffer
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("window {window_id} has no committed buffer"))?;
         let renderer = self
             .renderer
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("no offscreen renderer configured"))?;
-        let mut frame = renderer.render_surface(buffer, width, height)?;
+        let mut frame = renderer.render_window_surface(&surface, width, height)?;
         frame.window_id = window_id;
         Ok(frame)
     }
@@ -546,3 +544,4 @@ delegate_shm!(State);
 delegate_seat!(State);
 delegate_output!(State);
 delegate_xdg_shell!(State);
+delegate_viewporter!(State);

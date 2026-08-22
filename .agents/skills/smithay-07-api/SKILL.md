@@ -837,3 +837,98 @@ surface.send_configure();
 ### Surface → toplevel mapping
 
 No `get_toplevel_by_surface` exists. Store the mapping yourself in `WindowManager`: `HashMap<ObjectId, ToplevelSurface>`, populated in `new_toplevel`.
+
+## Subsurfaces + Viewporter (Plan 006, verified from smithay 0.7.0 source)
+
+### Subsurfaces: no extra setup
+
+`CompositorState::new::<D>` creates BOTH the `wl_compositor` (v5) and
+`wl_subcompositor` (v1) globals. There is NO `delegate_subcompositor!` macro —
+the existing `delegate_compositor!(State)` already delegates dispatch for
+`WlCompositor`, `WlSubcompositor`, `WlSubsurface` (with `SubsurfaceUserData`),
+`WlSurface`, `WlRegion`, and `WlCallback` to `CompositorState`. Clients can
+immediately use `wl_subcompositor` once `CompositorState` is created.
+
+### Walking the subsurface tree
+
+```rust
+use smithay::wayland::compositor::{
+    get_children, with_states, SubsurfaceCachedState, BufferAssignment, SurfaceAttributes,
+};
+
+// get_children(parent: &WlSurface) -> Vec<WlSurface>  (clones, cheap)
+// SubsurfaceCachedState { pub location: Point<i32, Logical> }
+//   — child position RELATIVE TO ITS PARENT; accumulate manually:
+//     child_offset = parent_offset + child SubsurfaceCachedState::location
+
+// Committed buffer of ANY surface (root or subsurface):
+let buffer: Option<WlBuffer> = with_states(surface, |states| {
+    states.cached_state.get::<SurfaceAttributes>().current().buffer
+        .as_ref()
+        .and_then(|a| match a {
+            BufferAssignment::NewBuffer(b) => Some(b.clone()), // BufferAssignment is NOT Clone — clone the inner WlBuffer
+            BufferAssignment::Removed => None,
+        })
+});
+```
+
+`BufferAssignment` is `enum { Removed, NewBuffer(WlBuffer) }` (Debug only, no
+Clone). `with_states(surface, |states: &SurfaceData| ...)` locks the
+per-surface user-data mutex for the closure; each surface has its own mutex,
+and `get_children` drops its guard before returning, so a recursive tree walk
+(`get_children` → `with_states` on each child) cannot deadlock.
+
+`MultiCache::get::<T>()` (used as `states.cached_state.get::<T>()`) LAZILY
+inserts `T::default()` on first use — it does NOT panic for a type that was
+never written (e.g. `SubsurfaceCachedState` on a non-subsurface root).
+
+### Viewporter: NO ViewportHandler trait
+
+There is no handler trait to implement. `delegate_viewporter!(State)` expands
+directly to `delegate_global_dispatch!` + `delegate_dispatch!` for
+`WpViewporter` (data `()`) and `WpViewport` (data `ViewportState`), all
+delegating to `ViewporterState` / `ViewportState`, which handle every request
+internally (set_source/set_destination are double-buffered into
+`ViewportCachedState`).
+
+```rust
+use smithay::delegate_viewporter;
+use smithay::wayland::viewporter::ViewporterState;
+
+// In State:
+pub viewporter_state: ViewporterState,
+// In State::new (bounds satisfied by the delegate_viewporter! macro +
+// State: CompositorHandler):
+let viewporter_state = ViewporterState::new::<State>(&display_handle);
+// At the bottom of the file:
+delegate_viewporter!(State);
+```
+
+`ViewporterState::new::<D>` bounds (all satisfied as above):
+`D: GlobalDispatch<WpViewporter, ()> + Dispatch<WpViewporter, ()>
+   + Dispatch<WpViewport, ViewportState> + 'static`.
+Note the `ViewportState` impl of `Dispatch<WpViewport, ViewportState, D>`
+requires `D: CompositorHandler` — a compositor always has that, but a bare
+test type would need a `CompositorHandler` impl too.
+
+`ViewportCachedState { pub src: Option<Rectangle<f64, Logical>>,
+pub dst: Option<Size<i32, Logical>> }` — read via
+`states.cached_state.get::<ViewportCachedState>().current()`; call
+`smithay::wayland::viewporter::ensure_viewport_valid(states, buffer_size)`
+before relying on it (protocol error check).
+
+### Pixman clipping
+
+`PixmanFrame::render_texture_from_to` intersects the clip region with
+`output_size` (the render target) AND the dst rect, so drawing a texture
+partially or fully outside the target is safe — it is silently clipped to the
+target. No manual clipping needed when rendering subsurfaces that stick out of
+the window rect.
+
+### Import borrow pattern
+
+`Renderer::import_buffer(&self, ...) -> Option<Result<PixmanTexture, _>>` —
+import ALL textures before `Renderer::render(&mut self, ...)`, because the
+returned `Frame` holds `&mut renderer` for the whole pass. `Frame::finish(self)`
+consumes the frame and releases the borrow; readback
+(`copy_framebuffer`/`map_texture`, both `&self`) must come after that.
