@@ -223,18 +223,32 @@ pub fn run(
         });
         if let Some(reqs) = requests {
             for req in reqs {
-                let RenderRequest::Render { reply } = req;
-                match state.render_frame() {
-                    Ok(frame) => {
-                        let _ = reply.send(frame.clone());
-                        if let Some(tx) = &frame_tx {
-                            state.telemetry.record_frame(frame.data.len());
-                            push_frame(tx, &frame_counter, frame);
+                match req {
+                    RenderRequest::Render { reply } => {
+                        match state.render_frame() {
+                            Ok(frame) => {
+                                let _ = reply.send(frame.clone());
+                                if let Some(tx) = &frame_tx {
+                                    state.telemetry.record_frame(frame.data.len());
+                                    push_frame(tx, &frame_counter, frame);
+                                }
+                            }
+                            Err(err) => {
+                                state.telemetry.record_error();
+                                tracing::warn!(?err, "render request failed");
+                            }
                         }
                     }
-                    Err(err) => {
-                        state.telemetry.record_error();
-                        tracing::warn!(?err, "render request failed");
+                    RenderRequest::RenderWindow { window_id, reply } => {
+                        match state.render_window(window_id) {
+                            Ok(frame) => {
+                                let _ = reply.send(frame);
+                            }
+                            Err(err) => {
+                                state.telemetry.record_error();
+                                tracing::warn!(?err, window_id, "render window request failed");
+                            }
+                        }
                     }
                 }
             }
