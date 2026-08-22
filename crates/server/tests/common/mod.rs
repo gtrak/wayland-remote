@@ -20,6 +20,7 @@ use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_subcompositor::WlSubcompositor;
+use wayland_client::protocol::wl_subsurface::WlSubsurface;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
 use wayland_protocols::xdg::shell::client::xdg_surface::{self, XdgSurface};
@@ -175,6 +176,7 @@ wayland_client::delegate_noop!(XdgClientState: ignore WlSurface);
 wayland_client::delegate_noop!(XdgClientState: ignore WlOutput);
 wayland_client::delegate_noop!(XdgClientState: ignore WlSeat);
 wayland_client::delegate_noop!(XdgClientState: ignore WlSubcompositor);
+wayland_client::delegate_noop!(XdgClientState: ignore WlSubsurface);
 wayland_client::delegate_noop!(XdgClientState: ignore XdgWmBase);
 wayland_client::delegate_noop!(XdgClientState: ignore XdgToplevel);
 impl Dispatch<XdgSurface, ()> for XdgClientState {
@@ -239,7 +241,7 @@ pub struct XdgClient {
     _seat: WlSeat,
     _pointer: Option<wl_pointer::WlPointer>,
     _subcompositor: Option<WlSubcompositor>,
-    _subsurfaces: Vec<WlSurface>,
+    _subsurfaces: Vec<(WlSurface, WlSubsurface)>,
 }
 
 impl XdgClient {
@@ -400,8 +402,8 @@ impl XdgClient {
             .expect("subcompositor should be bound");
 
         let sub_surface = self._compositor.create_surface(&qh, ());
-        subcompositor.get_subsurface(&sub_surface, &self._surface, &qh, ());
-        sub_surface.set_position(x, y);
+        let wl_subsurface = subcompositor.get_subsurface(&sub_surface, &self._surface, &qh, ());
+        wl_subsurface.set_position(x, y);
 
         let mut file = tempfile::tempfile()?;
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
@@ -430,7 +432,7 @@ impl XdgClient {
 
         self._pools.push(pool);
         self._buffers.push(buffer);
-        self._subsurfaces.push(sub_surface);
+        self._subsurfaces.push((sub_surface, wl_subsurface));
         Ok(())
     }
 }
