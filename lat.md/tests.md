@@ -66,6 +66,12 @@ Rendering a known opaque blue pixel yields the in-memory bytes `[B, G, R, A]` (n
 
 After the client re-commits the same surface at a larger size, the next render read-back reflects the new dimensions: a pixel that was background black now matches the surface pattern, and the region beyond the new size is black.
 
+### Renders subsurface tree
+
+Root + subsurface with different colors render at correct stacked positions in a per-window read-back.
+
+Currently `#[ignore]`: blocked by smithay 0.7 transaction-queue not applying subsurface commits in-process.
+
 ## Streaming
 
 QUIC streaming integration tests: each test spawns a compositor with the QUIC frame server on a free loopback port and drives it with a real quinn client over the wire protocol.
