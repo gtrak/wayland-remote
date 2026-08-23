@@ -368,6 +368,13 @@ impl WindowManager {
         self.windows.get(&window_id).map(|w| &w.surface)
     }
 
+    /// The window id backing a surface, if it is a tracked toplevel — the
+    /// reverse of [`Self::surface_for`].
+    #[must_use]
+    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<u64> {
+        self.surface_to_window.get(&surface.id()).copied()
+    }
+
     /// The committed (width, height) of a mapped window, if it is tracked.
     #[must_use]
     pub fn window_size(&self, window_id: u64) -> Option<(u32, u32)> {

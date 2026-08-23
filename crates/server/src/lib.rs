@@ -23,6 +23,7 @@ use smithay::wayland::compositor::CompositorClientState;
 use smithay::wayland::socket::ListeningSocketSource;
 use wayland_server::Display;
 use wayland_server::backend::ClientData;
+use wayland_remote_protocol::InputEvent;
 
 use crate::bridge::{CompositorCommand, NetCommand, channels};
 use crate::net::cert::ServerCert;
@@ -146,6 +147,16 @@ pub fn run(
             if let calloop::channel::Event::Msg(cmd) = event {
                 match cmd {
                     CompositorCommand::Input { window_id, event } => {
+                        // A pointer move moves the viewer's native cursor
+                        // (issue 04c); relay it before `event` is moved into
+                        // `inject_input`.
+                        if let InputEvent::PointerMove { x, y } = &event {
+                            let _ = bridge_tx.send(NetCommand::CursorMove {
+                                window_id,
+                                x: *x,
+                                y: *y,
+                            });
+                        }
                         let serial = state.input_router.next_serial();
                         let time = state.input_router.now_ms();
                         state.inject_input(window_id, event, serial, time);
@@ -211,6 +222,10 @@ pub fn run(
             ));
         }
         frame_tx = Some(comp_bridge.frame_tx);
+        // Give the compositor its own handle to the net side so cursor
+        // updates (`cursor_image`) can reach viewers; only set when the net
+        // bridge is active (i.e. inside this block).
+        state.net_cmd_tx = frame_tx.clone();
         runtime = Some(rt);
         tracing::info!(listen = %listen, "QUIC frame server enabled");
     }

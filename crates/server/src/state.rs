@@ -29,7 +29,7 @@ use smithay::input::keyboard::XkbConfig;
 use smithay::input::pointer::{CursorImageStatus, CursorImageSurfaceData};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
-use smithay::utils::{Logical, Point, Serial, Size, Transform};
+use smithay::utils::{Point, Serial, Size, Transform};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     BufferAssignment, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes,
@@ -59,6 +59,7 @@ use wayland_server::protocol::wl_shell_surface;
 use wayland_server::protocol::wl_surface::WlSurface;
 use wayland_server::{Client, DisplayHandle, Resource, delegate_dispatch, delegate_global_dispatch};
 
+use crate::bridge::NetCommand;
 use crate::rendering::{FrameBuffer, Offscreen, RenderRequest};
 use crate::wl_shell::WlShellState;
 
@@ -302,6 +303,9 @@ pub struct State {
     pub snapshot_done: bool,
     /// Server-side telemetry counters for observability and the test harness.
     pub telemetry: Telemetry,
+    /// Optional sender to the QUIC net side for cursor updates; `None` when
+    /// networking is off / in unit tests.
+    pub net_cmd_tx: Option<tokio::sync::mpsc::UnboundedSender<NetCommand>>,
     /// Server start, used as the monotonic time base for frame callbacks.
     start: Instant,
 }
@@ -388,6 +392,7 @@ impl State {
             input_router: crate::input::InputRouter::new(),
             snapshot_done: false,
             telemetry: Telemetry::new(),
+            net_cmd_tx: None,
             start: Instant::now(),
         })
     }
@@ -435,40 +440,74 @@ impl State {
             .ok_or_else(|| anyhow::anyhow!("window {window_id} not found"))?
             .clone();
 
-        // Cursor: only draw if a cursor surface is set AND the pointer is currently
-        // over this window's surface. Position is window-local (per-window model has
-        // origin (0,0)), offset by the cursor hotspot. The cursor `WlSurface` is
-        // cloned so it does not immutably borrow `self` while `self.renderer` is
-        // mutably borrowed below.
-        let cursor: Option<(WlSurface, Point<i32, Logical>)> = self
-            .cursor_surface
-            .as_ref()
-            .and_then(|cur| {
-                let ptr = self.seat.get_pointer()?;
-                let focus_id = ptr.current_focus()?.id();
-                if focus_id != surface.id() {
-                    return None;
-                }
-                let loc = ptr.current_location();
-                let hotspot = with_states(cur, |s| {
-                    s.data_map
-                        .get::<CursorImageSurfaceData>()
-                        .map(|d| d.lock().unwrap().hotspot)
-                        .unwrap_or_default()
-                });
-                let x = (loc.x - hotspot.x as f64).round() as i32;
-                let y = (loc.y - hotspot.y as f64).round() as i32;
-                Some((cur.clone(), Point::new(x, y)))
-            });
-
+        // The pointer cursor is no longer composited into the frame: it is a
+        // native viewer-side cursor (issue 04c), so render the window content
+        // without it.
         let renderer = self
             .renderer
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("no offscreen renderer configured"))?;
-        let cursor_ref = cursor.as_ref().map(|(s, p)| (s, *p));
-        let mut frame = renderer.render_window_surface(&surface, width, height, cursor_ref)?;
+        let mut frame = renderer.render_window_surface(&surface, width, height, None)?;
         frame.window_id = window_id;
         Ok(frame)
+    }
+
+    /// Resolve the window id a cursor update should target: the pointer-focus
+    /// window when the pointer is over a tracked toplevel, else the focused
+    /// window. `None` when neither yields a tracked window — in that case the
+    /// cursor update has no target to emit to and is skipped.
+    fn cursor_window_id(&self) -> Option<u64> {
+        self.seat
+            .get_pointer()
+            .and_then(|p| p.current_focus())
+            .and_then(|surface| self.window_manager.window_for_surface(&surface))
+            .or_else(|| self.window_manager.focused())
+    }
+
+    /// Read back the current cursor sprite's pixels (BGRA) via the offscreen
+    /// renderer, returning the frame on success. Any failure (no renderer, no
+    /// committed buffer, zero size, unimportable buffer) yields `None` — a
+    /// cursor readback must never panic or drop the client connection.
+    fn readback_cursor_sprite(&mut self, cursor: &WlSurface) -> Option<FrameBuffer> {
+        // The cursor surface's committed buffer (the client attaches + commits
+        // it before `set_cursor`, so it is in `current()` by the time this
+        // handler runs). Mirrors the buffer lookup in `commit`.
+        let buffer = with_states(cursor, |states| {
+            states
+                .cached_state
+                .get::<SurfaceAttributes>()
+                .current()
+                .buffer
+                .as_ref()
+                .and_then(|assignment| match assignment {
+                    BufferAssignment::NewBuffer(buffer) => Some(buffer.clone()),
+                    BufferAssignment::Removed => None,
+                })
+        })?;
+        // SHM buffers expose their size via `with_buffer_contents`; dmabuf
+        // buffers carry a `Dmabuf` in the data map instead (same fallback as
+        // `commit`).
+        let (width, height) =
+            with_buffer_contents(&buffer, |_, _, data| (data.width, data.height))
+                .ok()
+                .or_else(|| {
+                    get_dmabuf(&buffer)
+                        .ok()
+                        .map(|d| (d.width() as i32, d.height() as i32))
+                })?;
+        let width = u32::try_from(width).unwrap_or(0);
+        let height = u32::try_from(height).unwrap_or(0);
+        if width == 0 || height == 0 {
+            tracing::debug!(
+                "cursor sprite has no committed buffer or a zero size; skipping readback"
+            );
+            return None;
+        }
+        // Render the sprite buffer into a `width x height` target at origin and
+        // read the pixels back (the existing single-surface readback path).
+        self.renderer
+            .as_mut()
+            .and_then(|renderer| renderer.render_surface(&buffer, width, height).ok())
     }
 
     fn report_surface_count(&self) {
@@ -659,12 +698,47 @@ impl SeatHandler for State {
     fn focus_changed(&mut self, _seat: &Seat<State>, _focused: Option<&WlSurface>) {}
 
     fn cursor_image(&mut self, _seat: &Seat<State>, image: CursorImageStatus) {
-        // Only `Surface` carries a drawable cursor; `Hidden`/`Named` clear it
-        // (no cursor theme in the headless MVP).
-        self.cursor_surface = match image {
-            CursorImageStatus::Surface(s) => Some(s),
-            CursorImageStatus::Hidden | CursorImageStatus::Named(_) => None,
-        };
+        match image {
+            // A drawable cursor: keep it for (legacy) in-frame use, then relay
+            // its sprite to viewers. Any failure — no target window, no
+            // renderer, no committed buffer, unimportable buffer — is a no-op;
+            // a cursor update must never panic or drop the client.
+            CursorImageStatus::Surface(s) => {
+                self.cursor_surface = Some(s.clone());
+                if let Some(window_id) = self.cursor_window_id()
+                    && let Some(frame) = self.readback_cursor_sprite(&s)
+                    && let Some(tx) = &self.net_cmd_tx
+                {
+                    // The hotspot is on the cursor surface's data map (written by
+                    // `set_cursor` before this handler fired).
+                    let hotspot = with_states(&s, |states| {
+                        states
+                            .data_map
+                            .get::<CursorImageSurfaceData>()
+                            .map(|d| d.lock().unwrap().hotspot)
+                            .unwrap_or_default()
+                    });
+                    let _ = tx.send(NetCommand::CursorShape {
+                        window_id,
+                        width: frame.width,
+                        height: frame.height,
+                        hot_x: hotspot.x,
+                        hot_y: hotspot.y,
+                        data: frame.data,
+                    });
+                }
+            }
+            // No cursor theme in the headless MVP: `Hidden`/`Named` clear the
+            // in-frame cursor and tell viewers to hide theirs.
+            CursorImageStatus::Hidden | CursorImageStatus::Named(_) => {
+                self.cursor_surface = None;
+                if let Some(window_id) = self.cursor_window_id()
+                    && let Some(tx) = &self.net_cmd_tx
+                {
+                    let _ = tx.send(NetCommand::CursorHide { window_id });
+                }
+            }
+        }
     }
 }
 
