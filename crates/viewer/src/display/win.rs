@@ -12,20 +12,21 @@ use crate::input;
 use crate::session::ViewerSession;
 use crate::window_manager::ViewerWindowManager;
 
-use windows_sys::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows_sys::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, DIB_RGB_COLORS, EndPaint, InvalidateRect,
-    PAINTSTRUCT, SRCCOPY, StretchDIBits,
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, ClientToScreen, DIB_RGB_COLORS, EndPaint,
+    InvalidateRect, PAINTSTRUCT, SRCCOPY, StretchDIBits,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
-    DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW, GetWindowLongPtrW, HMENU,
-    IDC_ARROW, LoadCursorW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SWP_NOMOVE,
-    SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, TranslateMessage, WM_ACTIVATE,
-    WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateCursor, CreateWindowExW, DefWindowProcW,
+    DestroyCursor, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW,
+    GetWindowLongPtrW, HCURSOR, HMENU, IDC_ARROW, LoadCursorW, MSG, PostMessageW, PostQuitMessage,
+    RegisterClassW, SetCursor, SetCursorPos, ShowCursor, SWP_NOMOVE, SWP_NOZORDER,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, TranslateMessage, WM_ACTIVATE, WM_CLOSE,
+    WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
+    WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 
 /// Base for the app's custom window messages.
@@ -38,6 +39,27 @@ const WM_USER_WIN_EVENT: u32 = WM_USER + 2;
 const WM_USER_RTT: u32 = WM_USER + 3;
 /// The network task closed; the controller's message loop should quit.
 const WM_USER_NET_CLOSED: u32 = WM_USER + 4;
+/// A new cursor shape; `wParam` = window_id, `lParam` = `Box<CursorShapeMsg>` raw ptr.
+const WM_USER_CURSOR_SHAPE: u32 = WM_USER + 5;
+/// Cursor position update; `wParam` = window_id, `lParam` = `Box<CursorMoveMsg>` raw ptr.
+const WM_USER_CURSOR_MOVE: u32 = WM_USER + 6;
+/// Hide the cursor; `wParam` = window_id.
+const WM_USER_CURSOR_HIDE: u32 = WM_USER + 7;
+
+/// Payload posted to the UI thread when the server sends a new cursor sprite.
+struct CursorShapeMsg {
+    width: u32,
+    height: u32,
+    hot_x: i32,
+    hot_y: i32,
+    data: Vec<u8>,
+}
+
+/// Payload posted to the UI thread when the cursor position changes.
+struct CursorMoveMsg {
+    x: f64,
+    y: f64,
+}
 
 /// Encode a string as a null-terminated UTF-16 buffer for `PCWSTR` args.
 fn widen(s: &str) -> Vec<u16> {
@@ -52,6 +74,27 @@ fn now_ns() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
+}
+
+/// Build a native 32-bit alpha cursor from a top-down BGRA sprite.
+/// `data` must be exactly `width*height*4` bytes, top-down, `[B,G,R,A]`/pixel.
+/// Returns a caller-owned HCURSOR (0 on failure); DestroyCursor it before
+/// replacing or at shutdown. Run on the UI thread.
+fn make_cursor(data: &[u8], width: u32, height: u32, hot_x: i32, hot_y: i32) -> HCURSOR {
+    if data.len() != (width * height * 4) as usize {
+        return 0 as HCURSOR;
+    }
+    unsafe {
+        CreateCursor(
+            0 as HINSTANCE,
+            hot_x,
+            hot_y,
+            width as i32,
+            height as i32,
+            core::ptr::null(),
+            data.as_ptr() as *const core::ffi::c_void,
+        )
+    }
 }
 
 /// Commands the UI thread posts to the network task (focus / close / resize / quit).
@@ -73,6 +116,8 @@ struct Shared {
     control_tx: tokio::sync::mpsc::UnboundedSender<ControlCommand>,
     manager: Mutex<ViewerWindowManager>,
     focused: Mutex<Option<u64>>,
+    cursor: Mutex<Option<isize>>,
+    cursor_visible: Mutex<bool>,
 }
 
 /// Per-window state stashed on the controller HWND via `GWLP_USERDATA`.
@@ -105,6 +150,8 @@ pub fn run(
         control_tx,
         manager: Mutex::new(ViewerWindowManager::new()),
         focused: Mutex::new(None),
+        cursor: Mutex::new(None),
+        cursor_visible: Mutex::new(true),
     });
 
     // Current process handle; 0 = current process. Returns HMODULE, which is
@@ -338,10 +385,100 @@ unsafe extern "system" fn controller_proc(
                 }
             }
         }
-        WM_USER_NET_CLOSED => unsafe {
-            PostQuitMessage(0);
-        },
+        WM_USER_CURSOR_SHAPE => {
+            let msg = unsafe { Box::from_raw(lparam as *mut CursorShapeMsg) };
+            let hcur = make_cursor(&msg.data, msg.width, msg.height, msg.hot_x, msg.hot_y);
+            if !hcur.is_null() {
+                let old = state.shared.cursor.lock().unwrap().take();
+                if let Some(old) = old {
+                    unsafe {
+                        DestroyCursor(old as HCURSOR);
+                    }
+                }
+                unsafe {
+                    SetCursor(hcur);
+                }
+                *state.shared.cursor.lock().unwrap() = Some(hcur as isize);
+                let mut vis = state.shared.cursor_visible.lock().unwrap();
+                if !*vis {
+                    unsafe {
+                        ShowCursor(1);
+                    }
+                    *vis = true;
+                }
+            }
+        }
+        WM_USER_CURSOR_MOVE => {
+            let msg = unsafe { Box::from_raw(lparam as *mut CursorMoveMsg) };
+            let child = state.shared.manager.lock().unwrap().hwnd_for(wid);
+            if let Some(child) = child {
+                let child_hwnd = child as HWND;
+                let mut pt = POINT { x: 0, y: 0 };
+                unsafe {
+                    ClientToScreen(child_hwnd, &mut pt);
+                }
+                let (sx, sy) = {
+                    let child_ptr =
+                        unsafe { GetWindowLongPtrW(child_hwnd, GWLP_USERDATA) } as *mut ChildState;
+                    let (cw, ch) = if child_ptr.is_null() {
+                        (0, 0)
+                    } else {
+                        let cs = unsafe { &*child_ptr };
+                        (cs.client_w, cs.client_h)
+                    };
+                    let frame = state
+                        .shared
+                        .frames
+                        .lock()
+                        .unwrap()
+                        .get(&wid)
+                        .and_then(|s| s.latest());
+                    match (frame, (cw, ch)) {
+                        (Some(f), (cw, ch))
+                            if cw > 0 && ch > 0 && f.width > 0 && f.height > 0 =>
+                        {
+                            (
+                                cw as f64 / f.width as f64,
+                                ch as f64 / f.height as f64,
+                            )
+                        }
+                        _ => (1.0, 1.0),
+                    }
+                };
+                let screen_x = pt.x + (msg.x * sx) as i32;
+                let screen_y = pt.y + (msg.y * sy) as i32;
+                unsafe {
+                    SetCursorPos(screen_x, screen_y);
+                }
+            }
+        }
+        WM_USER_CURSOR_HIDE => {
+            let focused = *state.shared.focused.lock().unwrap();
+            if focused == Some(wid) && *state.shared.cursor_visible.lock().unwrap() {
+                unsafe {
+                    ShowCursor(0);
+                }
+                *state.shared.cursor_visible.lock().unwrap() = false;
+            }
+        }
+        WM_USER_NET_CLOSED => {
+            let old = state.shared.cursor.lock().unwrap().take();
+            if let Some(old) = old {
+                unsafe {
+                    DestroyCursor(old as HCURSOR);
+                }
+            }
+            unsafe {
+                PostQuitMessage(0);
+            }
+        }
         WM_CLOSE => {
+            let old = state.shared.cursor.lock().unwrap().take();
+            if let Some(old) = old {
+                unsafe {
+                    DestroyCursor(old as HCURSOR);
+                }
+            }
             let _ = state.shared.control_tx.send(ControlCommand::Shutdown);
             unsafe {
                 PostQuitMessage(0);
@@ -677,6 +814,34 @@ async fn net_main(
                     let _ = session
                         .send_control(&Message::Pong { timestamp_ns })
                         .await;
+                } else if let Some(Message::CursorShape {
+                    window_id,
+                    width,
+                    height,
+                    hot_x,
+                    hot_y,
+                    data,
+                }) = maybe
+                {
+                    let raw = Box::into_raw(Box::new(CursorShapeMsg {
+                        width,
+                        height,
+                        hot_x,
+                        hot_y,
+                        data,
+                    })) as isize;
+                    unsafe {
+                        PostMessageW(controller, WM_USER_CURSOR_SHAPE, window_id as usize, raw);
+                    }
+                } else if let Some(Message::CursorMove { window_id, x, y }) = maybe {
+                    let raw = Box::into_raw(Box::new(CursorMoveMsg { x, y })) as isize;
+                    unsafe {
+                        PostMessageW(controller, WM_USER_CURSOR_MOVE, window_id as usize, raw);
+                    }
+                } else if let Some(Message::CursorHide { window_id }) = maybe {
+                    unsafe {
+                        PostMessageW(controller, WM_USER_CURSOR_HIDE, window_id as usize, 0);
+                    }
                 }
             }
         }
