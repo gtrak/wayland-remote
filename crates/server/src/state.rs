@@ -14,6 +14,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use smithay::backend::allocator::dmabuf::Dmabuf;
+use smithay::backend::allocator::Buffer as _;
 use smithay::backend::allocator::Format;
 use smithay::delegate_compositor;
 use smithay::delegate_data_device;
@@ -35,7 +36,7 @@ use smithay::wayland::compositor::{
     get_role, with_states,
 };
 use smithay::wayland::dmabuf::{
-    DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier,
+    DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier, get_dmabuf,
 };
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::selection::SelectionHandler;
@@ -481,9 +482,17 @@ impl CompositorHandler for State {
             let attrs = guard.current();
             match attrs.buffer {
                 Some(BufferAssignment::NewBuffer(ref buffer)) => {
+                    // SHM buffers expose their size via with_buffer_contents; dmabuf
+                    // buffers carry a `Dmabuf` in their data map instead (with_buffer_contents
+                    // returns NotManaged for them), so fall back to get_dmabuf.
                     let (width, height) =
                         with_buffer_contents(buffer, |_, _, data| (data.width, data.height))
                             .ok()
+                            .or_else(|| {
+                                get_dmabuf(buffer)
+                                    .ok()
+                                    .map(|d| (d.width() as i32, d.height() as i32))
+                            })
                             .unwrap_or((0, 0));
                     let width = u32::try_from(width).unwrap_or(0);
                     let height = u32::try_from(height).unwrap_or(0);

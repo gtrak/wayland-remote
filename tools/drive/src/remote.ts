@@ -8,7 +8,12 @@
 
 import { execFile } from "node:child_process";
 
-const SUPPORTED_CLIENTS = ["weston-clickdot", "weston-flower", "weston-editor"];
+const SUPPORTED_CLIENTS = [
+  "weston-clickdot",
+  "weston-flower",
+  "weston-editor",
+  "weston-simple-egl",
+];
 
 /** Runs a command on the remote host, returns trimmed stdout. Throws on non-zero exit. */
 export async function sshExec(
