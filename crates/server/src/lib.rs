@@ -57,19 +57,24 @@ pub fn run(
     let mut display: Display<State> = Display::new()?;
     let display_handle = display.handle();
 
+    // Probe for a usable EGL render node up front: its (main_device, formats)
+    // drive the zwp_linux_dmabuf global (registered inside State::new), and its
+    // GlesRenderer backs the Offscreen::Gl variant.
+    let probe = crate::rendering::egl::probe();
+    let dmabuf_global = probe.as_ref().map(|p| (p.main_device, p.formats.clone()));
     let mut state = State::new(
         display_handle,
         config,
         status_tx,
         render_rx,
         shutdown.clone(),
+        dmabuf_global,
     )?;
 
-    // Initialize the offscreen renderer after display setup: probe for a
-    // usable EGL render node (GL renderer, can import dmabuf); fall back to
-    // the pixman software renderer (wl_shm only) when none works.
-    let setup = crate::rendering::egl::probe();
-    state.renderer = match setup {
+    // Initialize the offscreen renderer after display setup: the probe above
+    // found a working GPU (GL renderer, can import dmabuf), or we fall back to
+    // the pixman software renderer (wl_shm only).
+    state.renderer = match probe {
         Some(s) => Some(Offscreen::Gl(Box::new(OffscreenRenderer::with_renderer(
             s.renderer,
             state.config.width,

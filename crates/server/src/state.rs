@@ -13,8 +13,11 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
+use smithay::backend::allocator::dmabuf::Dmabuf;
+use smithay::backend::allocator::Format;
 use smithay::delegate_compositor;
 use smithay::delegate_data_device;
+use smithay::delegate_dmabuf;
 use smithay::delegate_output;
 use smithay::delegate_seat;
 use smithay::delegate_shm;
@@ -30,6 +33,9 @@ use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     BufferAssignment, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes,
     get_role, with_states,
+};
+use smithay::wayland::dmabuf::{
+    DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier,
 };
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::selection::SelectionHandler;
@@ -253,6 +259,9 @@ pub struct State {
     /// engine is present — the global's presence stops "No text input manager"
     /// warnings; typing works via the keyboard path.
     pub text_input_manager_state: TextInputManagerState,
+    /// Handles zwp_linux_dmabuf requests (EGL/dmabuf clients); the global is
+    /// registered only when an EGL render node was probed at startup.
+    pub dmabuf_state: DmabufState,
     /// The surface set via `wl_pointer.set_cursor`, if any. Drawn on top of the
     /// focused window at render time.
     pub cursor_surface: Option<WlSurface>,
@@ -286,6 +295,7 @@ impl State {
         status_tx: Option<Sender<usize>>,
         render_rx: Option<Receiver<RenderRequest>>,
         shutdown: Arc<AtomicBool>,
+        dmabuf_global: Option<(libc::dev_t, Vec<Format>)>,
     ) -> anyhow::Result<Self> {
         let compositor_state = CompositorState::new::<State>(&display_handle);
         let shm_state = ShmState::new::<State>(&display_handle, vec![]);
@@ -294,6 +304,17 @@ impl State {
         let data_device_state = DataDeviceState::new::<State>(&display_handle);
         let text_input_manager_state = TextInputManagerState::new::<State>(&display_handle);
         let wl_shell_state = WlShellState::new(&display_handle);
+
+        // Register the zwp_linux_dmabuf global only when the EGL probe found a
+        // render node: the feedback advertises that node's dev_t + formats so
+        // EGL/dmabuf clients (e.g. weston-simple-egl) can attach buffers.
+        let mut dmabuf_state = DmabufState::new();
+        if let Some((main_device, formats)) = dmabuf_global {
+            let feedback = DmabufFeedbackBuilder::new(main_device, formats).build()?;
+            let _global = dmabuf_state
+                .create_global_with_default_feedback::<State>(&display_handle, &feedback);
+            tracing::info!("zwp_linux_dmabuf global registered (EGL/dmabuf clients enabled)");
+        }
 
         let mut seat_state = SeatState::<State>::new();
         let mut seat = seat_state.new_wl_seat(&display_handle, "wayland-remote");
@@ -336,6 +357,7 @@ impl State {
             data_device_state,
             wl_shell_state,
             text_input_manager_state,
+            dmabuf_state,
             cursor_surface: None,
             window_manager: crate::window::WindowManager::new(),
             surfaces: HashMap::new(),
@@ -561,6 +583,21 @@ impl BufferHandler for State {
     }
 }
 
+impl DmabufHandler for State {
+    fn dmabuf_state(&mut self) -> &mut DmabufState {
+        &mut self.dmabuf_state
+    }
+
+    fn dmabuf_imported(&mut self, _global: &DmabufGlobal, _dmabuf: Dmabuf, notifier: ImportNotifier) {
+        // Acknowledge the import so the client's wl_buffer is created. The
+        // actual texture import happens lazily at render time (OffscreenRenderer
+        // -> import_buffer -> import_dmabuf on the GL renderer).
+        if let Err(err) = notifier.successful::<State>() {
+            tracing::warn!(?err, "dmabuf import: could not acknowledge (client may have died)");
+        }
+    }
+}
+
 impl SeatHandler for State {
     type KeyboardFocus = WlSurface;
     type PointerFocus = WlSurface;
@@ -644,6 +681,7 @@ delegate_xdg_shell!(State);
 delegate_viewporter!(State);
 delegate_data_device!(State);
 delegate_text_input_manager!(State);
+delegate_dmabuf!(State);
 
 // Legacy wl_shell (hand-rolled state in crate::wl_shell).
 delegate_global_dispatch!(State: [wl_shell::WlShell: ()] => crate::wl_shell::WlShellState);
