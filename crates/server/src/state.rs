@@ -533,6 +533,9 @@ impl CompositorHandler for State {
                 _ => None,
             }
         });
+        // A `Some` commit attached a new buffer (pixels may have changed).
+        // Captured before `committed` is moved into the `info` match below.
+        let new_buffer = committed.is_some();
         self.telemetry.record_commit();
 
         let id = surface.id();
@@ -574,6 +577,11 @@ impl CompositorHandler for State {
         self.surfaces.insert(id, info);
         self.report_surface_count();
         self.window_manager.on_commit(surface, width, height);
+        // A newly committed buffer may have changed the window's pixels: mark
+        // every mapped window dirty so the stream loop re-renders it.
+        if new_buffer {
+            self.window_manager.mark_all_mapped_dirty();
+        }
 
         // Toplevels store the client-set title in their role data (set_title
         // is not double-buffered); sync it so window events carry it.

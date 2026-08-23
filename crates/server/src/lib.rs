@@ -291,6 +291,9 @@ pub fn run(
         // borrowed mutably by `render_window` while the sender is held.
         if let Some(tx) = frame_tx.clone() {
             for window_id in state.window_manager.mapped_windows() {
+                if !state.window_manager.take_dirty(window_id) {
+                    continue; // no new content or pointer move since the last render
+                }
                 match state.render_window(window_id) {
                     Ok(frame) => {
                         tracing::debug!(

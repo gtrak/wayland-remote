@@ -105,6 +105,9 @@ pub fn inject(state: &mut State, window_id: u64, event: InputEvent, serial: Seri
                 // Send a frame to delimit the event group — real toolkit
                 // clients (wl_pointer v5+) buffer events until a frame arrives.
                 ptr.frame(state);
+                // A pointer move shifts the in-frame cursor (drawn on the focused
+                // window until issue 04): re-render so the cursor stays live.
+                state.window_manager.mark_all_mapped_dirty();
             }
         }
         InputEvent::PointerButton {

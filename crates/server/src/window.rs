@@ -44,6 +44,10 @@ pub struct Window {
     /// True once the client has acked at least one configure. Legacy
     /// wl_shell windows are pre-acked (that protocol has no ack_configure).
     pub acked: bool,
+    /// True until the next render after the last content/pointer change;
+    /// cleared by the stream loop. Set on map and on any new-buffer commit or
+    /// pointer move, so a static window with no commits is not re-rendered.
+    pub dirty: bool,
 }
 
 /// Manages the lifecycle of xdg toplevels.
@@ -96,6 +100,7 @@ impl WindowManager {
                 height: 0,
                 mapped: false,
                 acked: false,
+                dirty: true,
             },
         );
         self.surface_to_window.insert(id, window_id);
@@ -126,6 +131,7 @@ impl WindowManager {
                 height: 0,
                 mapped: false,
                 acked: true,
+                dirty: true,
             },
         );
         self.surface_to_window.insert(id, window_id);
@@ -185,6 +191,32 @@ impl WindowManager {
                 }
             }
         }
+    }
+
+    /// Mark every mapped window as needing a fresh render. Called after any
+    /// new-buffer commit and on pointer move (so the in-frame cursor stays live
+    /// until issue 04 moves it); a static window with neither is not re-rendered.
+    pub fn mark_all_mapped_dirty(&mut self) {
+        for win in self.windows.values_mut() {
+            if win.mapped {
+                win.dirty = true;
+            }
+        }
+    }
+
+    /// Consume a mapped window's dirty flag: return it and clear it to false.
+    /// Returns false for an unknown or unmapped window (nothing to render).
+    #[must_use]
+    pub fn take_dirty(&mut self, window_id: u64) -> bool {
+        let Some(win) = self.windows.get_mut(&window_id) else {
+            return false;
+        };
+        if !win.mapped {
+            return false;
+        }
+        let dirty = win.dirty;
+        win.dirty = false;
+        dirty
     }
 
     /// Update the stored title (called when the client sets a title).

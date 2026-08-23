@@ -71,3 +71,9 @@ Tradeoff: resizing an HWND to a different aspect ratio than the remote surface d
 One pixman `Argb8888` render target per mapped window (via `render_surface`) instead of a single composite desktop buffer; `FrameHeader::window_id` is the demux key and the viewer keeps one `FrameStore` per window.
 
 A composite approach was rejected because it requires server-side window layout/compositing and defeats PRD Step 6's "each toplevel is its own HWND" goal.
+
+### Per-window change gating
+
+A per-window dirty flag gates rendering: the stream loop renders + streams only windows whose pixels may have changed, not every mapped window every tick.
+
+`Window::dirty` ([[crates/server/src/window.rs#Window]]) defaults to true at map; `CompositorHandler::commit` marks every mapped window dirty on any new-buffer commit (`mark_all_mapped_dirty`, [[crates/server/src/window.rs#WindowManager#mark_all_mapped_dirty]]) and `inject` does so on pointer move (the in-frame cursor must keep moving until the cursor moves to the viewer in a later change). The loop consumes the flag via `take_dirty` ([[crates/server/src/window.rs#WindowManager#take_dirty]]) and skips clean windows. This kills the GL import + PBO readback + compress + send cost for static windows (the multi-window win) while animating clients — which commit a new buffer every frame — keep re-rendering every commit. The coarse "mark all mapped windows" choice is deliberate: it is safe (no frozen subsurface animation) and simple; per-window damage (issue 03) later refines it to a bounding box, and the local viewer cursor (issue 04) removes the pointer-move marking entirely.
