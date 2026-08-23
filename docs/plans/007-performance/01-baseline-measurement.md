@@ -39,3 +39,44 @@ issue's win is measured, not assumed. This is the "before" for issues 02–05.
   labeling which stage dominates (readback vs compress vs send).
 - `cargo test --workspace` + `lat check` still green (this issue adds no behavior,
   only measurement).
+
+## Baseline (captured at `e36d708`, gary-agents)
+
+Host: 3× RTX 5060 Ti at ~90% (inference load). Client: `weston-simple-egl`,
+1280×720, viewer connected (QUIC session open so the net path runs).
+
+**Per-frame (steady state, fps ≈ 19):**
+
+| stage | cost/frame | range | notes |
+|-------|-----------|-------|-------|
+| render pass (GL) | **~0.7 ms** | 0.64–0.83 | `create_buffer` → `finish`/`wait` |
+| readback (PBO) | **~0.56 ms** | 0.55–0.57 | `copy_framebuffer` + `map_texture`; variable under GPU contention |
+| compress (Lz4) | **~1.3 ms** | 1.2–1.45 | 3.5 MB → ~290 KB |
+| **total server** | **~2.6 ms** | — | render + readback + compress |
+
+**Per-second (fps = 19):** `render_ms` 21–28, `readback_ms` 10–45 (spikes under GPU
+load; 10–11 when idle / no viewer connected). Frame size 3,686,400 B (1280×720×4) →
+~298,000 B compressed (Lz4 ~12.5:1). On-wire bandwidth **~44 Mbps** (290 KB × 19 fps).
+
+**Findings**
+
+- The **server render + readback + compress is only ~2.6 ms/frame — ~5% of the ~52 ms
+  frame budget at 19 fps. The server is NOT the bottleneck.**
+- Per-frame cost ranking: **compress (1.3 ms) > render (0.7 ms) ≈ readback (0.56 ms).**
+- **`readback_ms` is variable (10→45 ms/s)** — spikes track the GPUs' inference load
+  (PBO contention). This is the likely source of the observed "perf drops" (occasional
+  readback stalls), not steady cost.
+- The **19 fps is client pacing** (`weston-simple-egl` paces via frame callbacks), not a
+  server limit.
+
+**Implications for 02–04**
+
+- **02 (change gating):** a static window currently pays the full ~2.6 ms/frame for no
+  reason (the stream loop re-renders every mapped window every tick). 02 drives that to
+  0. (Validate post-02: a static client's `render_ms`/`readback_ms` should fall to ~0.)
+- **03 (partial damage):** for a *full-screen* redraw (weston-simple-egl rotates the
+  whole scene) there is no region to exploit — readback + compress still run on the full
+  frame. 03 helps *localized* changes (bandwidth + compress).
+- The definitive fix for high-fps full-screen animation is **video encoding (NVENC)**
+  (PRD §7) — a follow-up plan, now data-supported (raw path sends ~44 Mbps + 1.3 ms
+  compress/frame).
