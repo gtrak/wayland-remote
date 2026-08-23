@@ -1007,3 +1007,77 @@ and `current_focus() -> Option<WlSurface>` (only draw over the focused window).
 Draw position = `current_location() - hotspot`. Exclude the cursor from surface
 tiling in `commit` via `smithay::wayland::compositor::get_role(surface) ==
 Some("cursor_image")`. Clear `State.cursor_surface` in `destroyed`.
+
+## Frame callbacks / present completion
+
+`wl_surface.frame(callback)`-paced clients (weston-simple-egl, weston-flower,
+most real EGL/animation clients) only advance when the compositor fires the
+callback's `done`. Without it they commit 1-2 frames then stall (static image).
+Fire the callbacks in `CompositorHandler::commit`.
+
+### Where the callbacks live
+
+`SurfaceAttributes` (smithay::wayland::compositor) has a public field
+(compositor/mod.rs):
+
+```rust
+pub frame_callbacks: Vec<wayland_server::protocol::wl_callback::WlCallback>,
+```
+
+`WlCallback` is a wayland resource handle (`Clone`).
+
+### pending -> current commit flow (verified from source)
+
+1. Client sends `wl_surface.frame(cb)` -> smithay's `Request::Frame` handler
+   pushes `cb` onto `...get::<SurfaceAttributes>().pending().frame_callbacks`.
+2. Client sends `wl_surface.commit`. smithay's commit pipeline (compositor/mod.rs
+   step 2) runs BEFORE your `CompositorHandler::commit` (step 4):
+   - `Cacheable::commit` (handlers.rs) does
+     `frame_callbacks: std::mem::take(&mut self.frame_callbacks)` on PENDING.
+   - `merge_into` (handlers.rs) does `into.frame_callbacks.extend(self.frame_callbacks)`
+     into CURRENT.
+   - For a normal surface (not a sync subsurface) the commit id is `None`, so pending
+     is merged straight into current.
+   - Net: by the time your handler runs, `current().frame_callbacks` == the callbacks
+     requested since the last commit (the pending vec is emptied by `mem::take` each
+     commit). Drain current in the handler so nothing re-fires.
+
+### Exact API (wayland-server 0.31.14)
+
+`done` is a plain generated method taking a `u32` millisecond timestamp — NOT a
+`Time` type (don't hunt for `wayland_server::Time`):
+
+```rust
+WlCallback::done(&self, time: u32)
+```
+
+(smithay's own `send_frame_callbacks_surface_tree` calls
+`callback.done(time.as_millis() as u32)` where `time: Duration`.) A monotonic ms
+value is enough; no wall clock needed. wayland-remote uses
+`self.start.elapsed().as_millis() as u32` with a `start: Instant` field on `State`
+(initialized `Instant::now()` in `State::new`).
+
+`states.cached_state.get::<SurfaceAttributes>()` returns a
+`MutexGuard<CachedState<SurfaceAttributes>>`; `.current()` is `&mut SurfaceAttributes`;
+`.frame_callbacks` is the `Vec`. Use `.drain(..)` to move each callback out
+(fire-once; the next commit repopulates).
+
+### Minimal working snippet (top of `CompositorHandler::commit`)
+
+```rust
+// needs `start: Instant` on State (init `Instant::now()` in State::new)
+let time = self.start.elapsed().as_millis() as u32;
+with_states(surface, |states| {
+    let mut guard = states.cached_state.get::<SurfaceAttributes>();
+    for callback in guard.current().frame_callbacks.drain(..) {
+        callback.done(time);
+    }
+});
+```
+
+Place it at the TOP of `commit`, before the `cursor_image` role early-return, so
+every committed surface fires its callbacks (a cursor surface normally has none;
+`drain` on an empty vec is a no-op, so it can't crash). Imports already present in
+state.rs: `with_states`, `SurfaceAttributes` (smithay::wayland::compositor) and
+`Instant` (std::time). No new import for `WlCallback` — the drain yield type is
+used via method resolution.

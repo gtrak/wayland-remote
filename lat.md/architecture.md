@@ -22,6 +22,13 @@ The pointer cursor is composited on top of the focused window. `SeatHandler::cur
 
 The renderer is chosen once at startup by `egl::probe` ([[crates/server/src/rendering/egl.rs#probe]]), which globs `/dev/dri/renderD*` and builds a Smithay `GlesRenderer` (GBM→EGLDisplay→EGLContext→GlesRenderer) on the first node where the whole chain succeeds. Because `GlesRenderer` and `PixmanRenderer` satisfy the same trait set (`Renderer + ImportAll + Offscreen<T> + Bind<T> + ExportMem`, with the PBO readback serving the `ExportMem` path), `OffscreenRenderer<R, T>` is generic and the identical render/readback pipeline serves both; `Offscreen { Software, Gl }` ([[crates/server/src/rendering/mod.rs#Offscreen]]) dispatches to whichever was built. When a GL renderer is built, `State` also registers the `zwp_linux_dmabuf` global (`DmabufFeedbackBuilder` with the node's `dev_t` + the display's dmabuf render formats) so EGL/dmabuf clients can attach buffers; on the pixman fallback no dmabuf global is advertised. dmabuf imports are acknowledged in `DmabufHandler::dmabuf_imported` and the texture is created lazily at render time (`import_buffer`→`import_dmabuf`). Note the commit handler must read a buffer's size via `get_dmabuf` for dmabuf buffers — `with_buffer_contents` is SHM-only and returns `NotManaged` otherwise, which silently mapped dmabuf windows at 0×0 (GL FBO bind failure).
 
+The `CompositorHandler::commit` ([[crates/server/src/state.rs#State]]) also fires
+the surface's pending present-completion frame callbacks: it drains
+`SurfaceAttributes.frame_callbacks` and sends `done` on each with a monotonic
+millisecond timestamp from `State.start`. Without this, `wl_surface.frame`-paced
+clients (weston-simple-egl, weston-flower) commit one or two frames then stall on
+a static image; with it, the scene animates.
+
 ## Telemetry
 
 The server keeps lightweight counters on `State` for observability and the test harness: frames streamed, frame bytes, commits, input events, input-to-commit latency, and errors. See [[architecture#Rendering Pipeline]] and [[architecture#Runtime Split]].

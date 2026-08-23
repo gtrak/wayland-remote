@@ -286,6 +286,8 @@ pub struct State {
     pub snapshot_done: bool,
     /// Server-side telemetry counters for observability and the test harness.
     pub telemetry: Telemetry,
+    /// Server start, used as the monotonic time base for frame callbacks.
+    start: Instant,
 }
 
 impl State {
@@ -370,6 +372,7 @@ impl State {
             input_router: crate::input::InputRouter::new(),
             snapshot_done: false,
             telemetry: Telemetry::new(),
+            start: Instant::now(),
         })
     }
 
@@ -472,6 +475,19 @@ impl CompositorHandler for State {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        // Fire present-completion frame callbacks for this commit so
+        // wl_surface.frame-paced clients (e.g. weston-simple-egl) advance.
+        // smithay merged the pending callbacks into current() just before this
+        // handler ran; draining moves each one out so it fires exactly once
+        // (the next commit repopulates the vec).
+        let time = self.start.elapsed().as_millis() as u32;
+        with_states(surface, |states| {
+            let mut guard = states.cached_state.get::<SurfaceAttributes>();
+            for callback in guard.current().frame_callbacks.drain(..) {
+                callback.done(time);
+            }
+        });
+
         // The cursor surface is drawn explicitly on top of the focused window at
         // render time; skip tiling it into the surface map.
         if get_role(surface) == Some("cursor_image") {
