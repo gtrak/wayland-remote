@@ -9,11 +9,12 @@ anyhow.workspace = true
 bytes.workspace = true
 calloop = { workspace = true, features = ["signals"] }
 image.workspace = true
+libc.workspace = true
 quinn.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
 sha2.workspace = true
-smithay.workspace = true
+smithay = { workspace = true, features = ["renderer_gl", "backend_gbm"] }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

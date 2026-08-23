@@ -28,7 +28,7 @@ below.
 | GPUs idle? | No. nvidia-smi shows ~15.3–15.7 GiB of 16 GiB used and 88–92% util on all three (other workloads). |
 | `weston-simple-egl` installed? | Yes, `/usr/bin/weston-simple-egl`. |
 | Software DRI / Vulkan? | `swrast_dri.so` + `kms_swrast_dri.so` present; Vulkan ICDs `lvp_icd.json` (lavapipe) + `nvidia_icd.json` present; `mesa-vulkan-drivers` 26.0.3 + `libvulkan1` 1.4.341 installed. `vulkaninfo` not installed. |
-| smithay 0.7.0 GL/EGL renderer? | `renderer_glow` feature → `GlesRenderer` (glow backend) in `src/backend/renderer/gles/`. **There is NO `renderer_egl` and NO `renderer_wgpu` feature.** |
+| smithay 0.7.0 GL/EGL renderer? | `renderer_gl` feature → `GlesRenderer` in `src/backend/renderer/gles/` (gated `#[cfg(feature = "renderer_gl")]`, renderer/mod.rs:27 — **correction**: the earlier note said `renderer_glow`, but that feature adds a different `GlowRenderer`). **There is NO `renderer_egl` and NO `renderer_wgpu` feature.** |
 | Can surfaceless EGL import dmabuf? | **Effectively no.** On Mesa 26 a surfaceless software display DOES advertise `EGL_EXT_image_dma_buf_import`, but on gary-agents it cannot create any GL context (all configs → `EGL_BAD_CONFIG`/`EGL_BAD_ATTRIBUTE`), so `get_dmabuf_formats`/`create_image_from_dmabuf`/`GlesRenderer` have nothing to render through. Dead end. See "Software-EGL-over-GBM fallback (llvmpipe)". |
 | Does GBM + software (llvmpipe) EGL work on gary-agents? | **No.** Mesa ICD `eglInitialize` FAILS on the NVIDIA render nodes (libgbm loads the NVIDIA GBM backend `nvidia-drm_gbm.so`; Mesa can't attach a software DRI driver). `LIBGL_ALWAYS_SOFTWARE=1` alone is ignored (NVIDIA ICD still used). Only the NVIDIA **hw** GBM path works and advertises dmabuf import. Unverified (not testable here) on a virtio-gpu / generic-`dri`-backend VM. See "Software-EGL-over-GBM fallback (llvmpipe)". |
 | Can a GPU-less box do EGL/dmabuf at all? | **No in smithay 0.7.0.** No render node → no GBM → no device-backed EGL display; no wgpu/lavapipe renderer; the EGL client itself also needs a render node to allocate its dmabuf. |
@@ -115,8 +115,8 @@ Layout note: `dmabuf` and `gbm` allocators are single files; there is no
 ### Feature flags (Cargo.toml `[features]`)
 
 ```
-renderer_gl   = ["gl_generator", "backend_egl"]
-renderer_glow = ["renderer_gl", "glow"]        # <-- the GlesRenderer (can import EGL/dmabuf)
+renderer_gl   = ["gl_generator", "backend_egl"]   # <-- the GlesRenderer (can import EGL/dmabuf)
+renderer_glow = ["renderer_gl", "glow"]           # different GlowRenderer (renderer/glow.rs), not needed
 renderer_pixman = ["pixman"]
 renderer_multi = ["backend_drm", "aliasable"]
 renderer_test  = []
@@ -128,8 +128,8 @@ backend_vulkan = ["ash", "scopeguard"]           # Vulkan ALLOCATOR only (src/ba
 ```
 
 There is **no `renderer_egl`** feature and **no `renderer_wgpu`** feature.
-`grep -r wgpu src/` → empty. The GL path is `renderer_glow` (glow). To get an
-EGL-capable renderer that imports dmabuf, enable **`renderer_glow` +
+`grep -r wgpu src/` → empty. The GL path is `renderer_gl` (GlesRenderer). To
+get an EGL-capable renderer that imports dmabuf, enable **`renderer_gl` +
 `backend_gbm`** (the latter pulls `gbm` + `backend_drm`).
 
 Current server config (`Cargo.toml:16`): `smithay = { version = "0.7.0",
@@ -168,7 +168,7 @@ default-features = false, features = ["wayland_frontend", "renderer_pixman"] }`.
     = `DEFAULT_DISPLAY`. **No device required — this is the only path usable without
     /dev/dri.**
 
-### GlesRenderer — `src/backend/renderer/gles/mod.rs` (gated `renderer_glow`)
+### GlesRenderer — `src/backend/renderer/gles/mod.rs` (gated `renderer_gl`)
 
 ```
 pub struct GlesRenderer {            // line 280
@@ -186,10 +186,10 @@ pub enum Capability { ... ExportFence /* needs GL_OES_EGL_sync */ }  // line 262
 Import impls (all on `GlesRenderer`):
 - `import_shm_buffer` (line ~765) — SHM.
 - `import_memory` (line ~936).
-- `impl ImportEgl for GlesRenderer` (line ~1097):
+- `impl ImportEgl for GlesRenderer` (line ~1097, gated `use_system_lib`):
   - `bind_wl_display(&mut self, display) -> Result<(), Error>` → `self.egl_reader =
-    Some(self.egl.display().bind_wl_display(display)?)` (line ~1102). **Must be called for
-    any dmabuf import.**
+    Some(self.egl.display().bind_wl_display(display)?)` (line ~1102). **Only needed for
+    wl_drm/EGL-buffer import — NOT for zwp_linux_dmabuf.**
   - `import_egl(&mut self, surface: &mut EGLSurface, format: &EGLFormat, ...)` (line ~1097).
   - `import_egl_buffer` (line ~1116) — EGLSurface-backed buffer (requires `egl_reader`).
   - `egl_reader()`.
@@ -197,12 +197,14 @@ Import impls (all on `GlesRenderer`):
   ```
   self.existing_dmabuf_texture(buffer)?.map(Ok).unwrap_or_else(|| {
       let is_external = !self.egl.dmabuf_render_formats().contains(&buffer.format());
-      let image = self.egl_reader...create_image_from_dmabuf(buffer)?;
+      let image = self.egl.display().create_image_from_dmabuf(buffer)?;  // egl_reader NOT involved
       self.import_egl_image(image, is_external, None)?
   })
   ```
-  **Requires `egl_reader` set AND a non-empty `dmabuf_render_formats` on the display** —
-  i.e. a device-backed EGL display, not surfaceless.
+  **Requires the `GL_OES_EGL_image` GL extension and a display that can
+  `create_image_from_dmabuf`** (i.e. a device-backed EGL display advertising
+  dmabuf import, not surfaceless). `egl_reader` is NOT required — that is only
+  for the wl_drm/EGL-buffer path (`import_egl_buffer` @1116).
 
 `ImportAll` (so `renderer.import_buffer(&WlBuffer)` works) is implemented via
 `Renderer + ImportMemWl + ImportEgl + ImportDmaWl` (`renderer/mod.rs` line ~683).
@@ -228,11 +230,18 @@ Import impls (all on `GlesRenderer`):
 
 ### Wayland dmabuf — `src/wayland/dmabuf/` (mod.rs + dispatch.rs)
 
-- `DmabufGlobalState::new(main_device: libc::dev_t, formats: impl IntoIterator<Item = Format>)`
-  (line ~315). `main_device` is the DRM dev_t of your render node (from
-  `GbmDevice`/`gbm::Device::main_device()`).
-- `DmabufState` (line ~580), `DmabufState::new()` (line ~588). Holds the
-  `zwp_linux_dmabuf` objects; create the global with a `DmabufGlobalState`.
+> **CORRECTED 2026-08-21** (see "GlesRenderer trait parity + EGL/GBM/dmabuf
+> constructor chain (verified)" below): there is **no public
+> `DmabufGlobalState::new`** in 0.7.0 — that struct is private (mod.rs:568).
+> The line ~315 signature is actually `DmabufFeedbackBuilder::new`, and
+> `gbm::Device::main()` does not exist in gbm 0.18 (only `Device::new(fd)`).
+> Globals are created via `DmabufState::create_global*`.
+
+- `DmabufFeedbackBuilder::new(main_device: libc::dev_t, formats: impl IntoIterator<Item = Format>)`
+  (line 315). `main_device` is the DRM dev_t of your render node.
+- `DmabufState` (line ~580), `DmabufState::new()` (line 588). Holds the
+  `zwp_linux_dmabuf` objects; `create_global*` registers the global on the
+  `DisplayHandle` internally (mod.rs:733).
 - `pub trait DmabufHandler: BufferHandler` (line ~992):
   - `fn dmabuf_state(&mut self) -> &mut DmabufState;`
   - `fn dmabuf_imported(&mut self, global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier);`
@@ -244,6 +253,329 @@ Import impls (all on `GlesRenderer`):
   `ZwpLinuxBufferParamsV1`, `WlBuffer`, `ZwpLinuxDmabufFeedbackv1` to `DmabufState`.
 - `pub fn get_dmabuf(buffer: &WlBuffer) -> Result<&Dmabuf, UnmanagedResource>`.
 - The `Dmabuf` type itself lives in `src/backend/allocator/dmabuf.rs` (single file).
+
+## GlesRenderer trait parity + EGL/GBM/dmabuf constructor chain (verified)
+
+Verified 2026-08-21 against the smithay 0.7.0 source (line numbers below are
+from that tree). **Bottom line: `GlesRenderer` implements the exact same trait
+set as `PixmanRenderer`, including `ExportMem` (copy_framebuffer + map_texture
+via PBO/ReadPixels + MapBufferRange), so `OffscreenRenderer` CAN be made
+generic and the existing render/readback code works unchanged for both.**
+
+### CRUX: trait parity table
+
+| Trait | `PixmanRenderer` (renderer/pixman/mod.rs) | `GlesRenderer` (renderer/gles/mod.rs) |
+| --- | --- | --- |
+| `RendererSuper` assoc. types | @810: `Error=PixmanError`, `TextureId=PixmanTexture`, `Framebuffer<'b>=PixmanTarget<'b>`, `Frame=PixmanFrame` | @2007: `Error=GlesError`, `TextureId=GlesTexture`, `Framebuffer<'b>=GlesTarget<'b>`, `Frame=GlesFrame` |
+| `Renderer` | `impl` @820 | `impl` @2017 |
+| `ImportMem` | @888 | @933 |
+| `ImportMemWl` (cfg `wayland_frontend`) | @1120 | @762 |
+| `ImportDma` | @1167 (real: CPU-maps dmabuf via `DmabufMappingMode::READ`; linear formats only, `dmabuf_formats` @1183) | @1166 (real: `create_image_from_dmabuf` → EGLImage → texture; `dmabuf_formats` @1208 = display's `dmabuf_texture_formats`) |
+| `ImportDmaWl` (cfg `wayland_frontend`) | empty impl @1199 | empty impl @1218 (default `import_dma_buffer` dispatches Shm/Dma via `get_dmabuf`) |
+| `ImportEgl` (cfg `wayland_frontend`+`backend_egl`+`use_system_lib`) | @1095 — **STUB**: `bind_wl_display` returns `Err(NoEGLDisplayBound)` | @1097 — real: `bind_wl_display` @1098 sets `egl_reader` |
+| `ImportAll` (blanket, renderer/mod.rs) | via blanket @704 (`Renderer+ImportMemWl+ImportDmaWl`) or @683 (`+ImportEgl`, needs `use_system_lib`) | same blanket impls — **no direct impl needed** |
+| `Offscreen<T>` | `Offscreen<Image<'static,'static>>` @1246: `create_buffer(&mut self, Fourcc, Size<i32,BufferCoord>) -> Result<Image<'static,'static>, PixmanError>` | `Offscreen<GlesTexture>` @1559 (also `Offscreen<GlesRenderbuffer>` @1599): `create_buffer(...) -> Result<GlesTexture, GlesError>` |
+| `Bind<T>` | `Bind<Image<'static,'static>>` @1261, `Bind<Dmabuf>` @1201 | `Bind<EGLSurface>` @1425, `Bind<Dmabuf>` @1431, `Bind<GlesTexture>` @1511, `Bind<GlesRenderbuffer>` @1517 |
+| `ExportMem` | @1003: `TextureMapping=PixmanMapping`; `copy_framebuffer` @1007; `map_texture` @1077 (returns `stride*height` bytes) | @1268: `TextureMapping=GlesMapping`; **`copy_framebuffer` @1273** (PBO `BufferData`+`ReadPixels`, @1284-1311); **`map_texture` @1390** (`MapBufferRange` on the PBO, @1401-1421; returns `w*h*4` bytes @1399) |
+
+So `R: Renderer + ImportAll + Offscreen<P> + Bind<P> + ExportMem` (where
+`Offscreen<P>` already implies `Renderer + Bind<P>`) is satisfied by **both**.
+
+Gles readback specifics (why the readback path is safe on GL):
+- `Offscreen<GlesTexture>::create_buffer` (gles/mod.rs:1559-1596) builds the
+  texture with `GlesTexture::from_raw(self, Some(internal), !has_alpha, ...)` —
+  the format IS stored, and `GlesTargetInternal::Texture::format()` returns
+  `Some` (gles/mod.rs:210). `copy_framebuffer` requires
+  `target.0.format()` (@1281) — satisfied.
+- `fourcc_to_gl_formats(Fourcc::Argb8888) = (BGRA_EXT, BGRA_EXT, UNSIGNED_BYTE)`
+  (gles/format.rs:21) — `create_buffer(Fourcc::Argb8888)` is accepted (BGRA_EXT
+  is in the allowed set, gles/mod.rs:1570-1574) and `copy_framebuffer(...,
+  Fourcc::Argb8888)` maps back to BGRA bytes — same wire format as pixman.
+- `map_texture` returns exactly `w*h*4` bytes (gles/mod.rs:1399) with no row
+  padding; pixman returns `stride*height` with `stride==w*4` for Argb8888. The
+  current `pixels.to_vec()` + `stride: width*4` in rendering/mod.rs holds for both.
+- `frame.finish()?.wait()` is renderer-agnostic (`SyncPoint::wait`); Gles
+  `Renderer::wait` handles `EGLFence` (gles/mod.rs:2107+).
+- `GlesRenderer` is **!Send** (`PhantomData<*mut ()>`, gles/mod.rs:314) — it must
+  stay on the compositor thread, which is already true (render requests are
+  consumed on the calloop loop thread).
+
+### Constructor chain (verbatim signatures)
+
+Render-node selection:
+
+```rust
+// EGLDevice — smithay::backend::egl::device (gated backend_egl)
+pub fn enumerate() -> Result<impl Iterator<Item = EGLDevice>, Error>        // egl/device.rs:27
+pub fn device_for_display(display: &EGLDisplay) -> Result<EGLDevice, Error> // egl/device.rs:90
+pub fn drm_device_path(&self) -> Result<PathBuf, Error>                     // egl/device.rs:140
+pub fn render_device_path(&self) -> Result<PathBuf, Error>                  // egl/device.rs:173
+pub fn try_get_render_node(&self) -> Result<Option<DrmNode>, Error>         // egl/device.rs:214 (gated backend_drm)
+pub fn is_software(&self) -> bool                                           // egl/device.rs:240
+// NOTE: on gary-agents the glvnd dispatch returns null for per-device string
+// queries (see "Software-EGL-over-GBM fallback" Step 4), so globbing
+// /dev/dri/renderD* directly is the more robust probe.
+```
+
+GBM — `GbmDevice` is a re-export: `pub use gbm::{BufferObjectFlags as
+GbmBufferFlags, Device as GbmDevice};` (allocator/gbm.rs:15). gbm crate 0.18.0:
+
+```rust
+pub struct Device<T: AsFd> { /* private */ }   // gbm-0.18.0 src/device.rs:23
+pub fn new(fd: T) -> IoResult<Device<T>>       // device.rs:77 — THE ONLY constructor
+```
+
+There is **no** `Device::main()` / `open()` in gbm 0.18 (older gbm 0.8 API —
+see correction above). Open the render node yourself:
+
+```rust
+let fd = std::fs::File::open("/dev/dri/renderD128")?;
+let gbm_dev = GbmDevice::new(fd)?;              // GbmDevice<File>
+// dev_path() for the fd: smithay's blanket trait `DevPath` for all AsFd
+// (src/utils/fd.rs:61-71) reads /proc/self/fd/<n> — gbm_dev.dev_path()
+```
+
+EGL display / context / renderer:
+
+```rust
+// EGLDisplay — egl/display.rs
+pub unsafe fn new<N>(native: N) -> Result<EGLDisplay, Error>
+where N: EGLNativeDisplay + 'static                        // egl/display.rs:201
+
+// impl EGLNativeDisplay for GbmDevice<A: AsFd + Send + 'static>
+// (egl/native.rs:147, gated backend_gbm) — tries EGL_KHR_platform_gbm
+// then EGL_MESA_platform_gbm with the raw gbm_device pointer.
+
+// EGLContext — egl/context.rs
+pub fn new(display: &EGLDisplay) -> Result<EGLContext, Error>   // context.rs:119
+pub fn display(&self) -> &EGLDisplay                            // context.rs:459
+
+// GlesRenderer — gles/mod.rs (module gated by feature `renderer_gl`, NOT
+// `renderer_glow` — see correction in the TL;DR)
+pub unsafe fn new(context: EGLContext) -> Result<GlesRenderer, GlesError>   // gles/mod.rs:468
+pub unsafe fn with_capabilities(context: EGLContext, capabilities: impl IntoIterator<Item = Capability>)
+    -> Result<GlesRenderer, GlesError>                                 // gles/mod.rs:491
+pub fn egl_context(&self) -> &EGLContext                               // gles/mod.rs:1796
+
+// ImportEgl (gated wayland_frontend+backend_egl+use_system_lib) — needed for
+// wl_drm/EGL buffers ONLY, not for zwp_linux_dmabuf:
+fn bind_wl_display(&mut self, display: &wayland_server::DisplayHandle)
+    -> Result<(), crate::backend::egl::Error>     // gles/mod.rs:1098
+```
+
+dmabuf format set + dev_t:
+
+```rust
+// EGLDisplay — egl/display.rs (mirrored on EGLContext, context.rs:464/469)
+pub fn dmabuf_render_formats(&self) -> &FormatSet   // display.rs:593
+pub fn dmabuf_texture_formats(&self) -> &FormatSet  // display.rs:598
+
+// FormatSet = smithay::backend::allocator::format::FormatSet
+// (Arc<IndexSet<Format>>; .iter() yields &Format; FromIterator<Format>).
+// Format = drm_fourcc::DrmFormat { code: Fourcc, modifier: Modifier }
+// (re-exported at allocator/mod.rs:38).
+// So: let formats: Vec<Format> = display.dmabuf_render_formats().iter().copied().collect();
+
+// DrmNode — drm 0.14.0, re-exported as smithay::backend::drm::DrmNode
+// (backend/drm/mod.rs:94)
+DrmNode::from_path(path)            // -> Result<DrmNode, CreateDrmNodeError>
+node.dev_id()                       // -> dev_t  (rustix u64; == libc dev_t value on linux)
+node.dev_path()                     // -> Option<PathBuf>
+node.node_with_type(NodeType::Render) // -> Option<Result<DrmNode, CreateDrmNodeError>>
+// main_device for the feedback global =
+//   DrmNode::from_path("/dev/dri/renderD128")?.dev_id()   (or stat the node, st_rdev)
+```
+
+### DmabufState / DmabufGlobal / DmaBufHandler (verbatim, wayland/dmabuf/mod.rs)
+
+Global creation — **`DmabufGlobalState` is a PRIVATE struct (mod.rs:568) in
+0.7.0; there is no public `DmabufGlobalState::new`.** Use:
+
+```rust
+pub struct DmabufFeedbackBuilder;                          // mod.rs:258
+pub fn new(main_device: libc::dev_t,
+           formats: impl IntoIterator<Item = Format>) -> Self   // mod.rs:315
+pub fn add_preference_tranche(self, target_device: libc::dev_t,
+           flags: Option<zwp_linux_dmabuf_feedback_v1::TrancheFlags>,
+           formats: impl IntoIterator<Item = Format>) -> Self   // mod.rs:341
+pub fn build(mut self) -> Result<DmabufFeedback, std::io::Error> // mod.rs:390
+
+pub struct DmabufState { /* globals: HashMap<usize, DmabufGlobalState> */ }  // mod.rs:580
+pub fn new() -> DmabufState                                          // mod.rs:588
+
+// v5 global with default feedback (recommended):
+pub fn create_global_with_default_feedback<D>(
+    &mut self,
+    display: &DisplayHandle,
+    default_feedback: &DmabufFeedback,
+) -> DmabufGlobal
+where
+    D: GlobalDispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, DmabufGlobalData>
+        + BufferHandler
+        + DmabufHandler
+        + 'static                                                      // mod.rs:645
+
+// Simpler v3 global, formats only (no dev_t/feedback needed):
+pub fn create_global<D>(
+    &mut self,
+    display: &DisplayHandle,
+    formats: impl IntoIterator<Item = Format>,
+) -> DmabufGlobal
+where
+    D: GlobalDispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, DmabufGlobalData>
+        + BufferHandler + DmabufHandler + 'static                      // mod.rs:598
+```
+
+`create_global*` registers the global on the `DisplayHandle` internally
+(`display.create_global::<D, ZwpLinuxDmabufV1, _>(version, data)` at
+mod.rs:733 — version 5 when feedback is passed, 3 otherwise). No manual
+`create_global` call is needed in user code.
+
+```rust
+pub trait DmabufHandler: BufferHandler {                    // mod.rs:992
+    fn dmabuf_state(&mut self) -> &mut DmabufState;         // mod.rs:994
+    fn dmabuf_imported(&mut self, global: &DmabufGlobal,
+                       dmabuf: Dmabuf, notifier: ImportNotifier);  // mod.rs:1002
+    fn new_surface_feedback(&mut self, _surface: &WlSurface,
+                       _global: &DmabufGlobal)
+        -> Option<DmabufFeedback> { None }                  // mod.rs:1011 (has default)
+}
+
+// ImportNotifier (mod.rs:854):
+pub fn successful<D>(mut self) -> Result<WlBuffer, InvalidId>   // mod.rs:881
+    where D: Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, DmabufParamsData>
+             + Dispatch<wl_buffer::WlBuffer, Dmabuf>
+             + BufferHandler + DmabufHandler + 'static
+pub fn failed(mut self)                                         // mod.rs:957
+pub fn incomplete(mut self) / invalid_dimensions / invalid_format  // mod.rs:928/937/948
+pub fn client(&self) -> Option<Client>                          // mod.rs:874
+```
+
+`dmabuf_imported` must: import the dmabuf into the renderer
+(`renderer.import_dmabuf(&dmabuf, None)` for Gles; or `import_buffer` after
+wrapping), then `let _ = notifier.successful::<State>();` on success or
+`notifier.failed()` on failure (dropping the notifier without a reply logs a
+"Compositor bug" warning, mod.rs:980-988).
+
+```rust
+macro_rules! delegate_dmabuf { ($(@<...>)? $ty:ty) => { ... } }  // mod.rs:1037
+// delegates ZwpLinuxDmabufV1 global dispatch + ZwpLinuxDmabufV1 /
+// ZwpLinuxBufferParamsV1 / WlBuffer(=Dmabuf data) / ZwpLinuxDmabufFeedbackV1
+// dispatch to DmabufState. Call as `delegate_dmabuf!(State);`
+pub fn get_dmabuf(buffer: &wl_buffer::WlBuffer) -> Result<&Dmabuf, UnmanagedResource>  // mod.rs:1029
+```
+
+### OffscreenRenderer generalization — every Pixman reference to change
+
+`crates/server/src/rendering/mod.rs` (line numbers as of 2026-08-21):
+
+| Line | Current | Becomes |
+| --- | --- | --- |
+| 10 | `use smithay::backend::renderer::pixman::{PixmanRenderer, PixmanTexture};` | drop (traits import at 11-13 already covers everything used) |
+| 89 | `renderer: PixmanRenderer,` (struct field) | `renderer: R,` in `pub struct OffscreenRenderer<R>` |
+| 97 | `let renderer = PixmanRenderer::new()?;` | per-backend ctors (e.g. `new_pixman(w,h)` / `new_gles(renderer, w,h)`) |
+| 114 | `let mut textures: Vec<(PixmanTexture, i32, i32)>` | `Vec<(R::TextureId, i32, i32)>` |
+| 281 | `let mut textures: Vec<(PixmanTexture, i32, i32)>` | `Vec<(R::TextureId, i32, i32)>` |
+| 291 | `let cursor_tex: Option<(PixmanTexture, Point<i32, Logical>)>` | `Option<(R::TextureId, Point<i32, Logical>)>` |
+| 373 | `fn committed_texture(...) -> Option<PixmanTexture>` | `-> Option<R::TextureId>` |
+| 1, 3, 87, 132, 208, 257, 307 | doc comments mentioning "pixman" | reword (pixman renderer clips... → renderer clips...) |
+
+That is ALL of them. Everything else (`FrameBuffer`, `RenderRequest`,
+`collect_surfaces`, and every render-pass call: `import_buffer`,
+`create_buffer`, `bind`, `render`, `clear`, `render_texture_at`, `finish`,
+`wait`, `copy_framebuffer`, `map_texture`) already goes through the shared
+traits — the generalization is mechanical. Two structural notes:
+
+- `Offscreen<Target>` is generic in smithay, so the offscreen buffer type
+  must be named. Since the buffer (`image`) is method-local, make **each
+  render method generic in it**:
+  `fn render<P>(&mut self, ...) where R: ImportAll + ExportMem + Offscreen<P>`
+  (`Offscreen<P>` implies `Renderer + Bind<P>`). The struct itself only needs
+  `R`: `pub struct OffscreenRenderer<R> { renderer: R, width: u32, height: u32 }`.
+- Call sites to update: `crates/server/src/state.rs:264`
+  (`pub renderer: Option<OffscreenRenderer>`) and
+  `crates/server/src/lib.rs:69` (`OffscreenRenderer::new(w, h)`).
+
+### Feature-flag corrections + implementation plan (probe-and-fallback)
+
+Corrections to earlier sections of this file:
+1. **`GlesRenderer` is behind `renderer_gl`**, not `renderer_glow`
+   (renderer/mod.rs:27-28: `#[cfg(feature = "renderer_gl")] pub mod gles;`).
+   `renderer_glow` adds a *different* `GlowRenderer` (renderer/glow.rs).
+2. `gbm 0.18` has no `Device::main()` — only `Device::new(fd)`.
+3. No public `DmabufGlobalState::new` — use `DmabufState::create_global*`.
+
+Feature changes (workspace `Cargo.toml:16`, currently
+`features = ["wayland_frontend", "renderer_pixman"]`):
+- Add **`renderer_gl`** (→ `gl_generator` + `backend_egl`; EGL loaded at
+  runtime via libloading, so no `libegl-dev` needed to build).
+- Add **`backend_gbm`** (→ `gbm` crate + `backend_drm`; needs `libgbm-dev` +
+  `libdrm-dev` at build time on Linux; NOT installed on gary-agents).
+- Keep `renderer_pixman` (fallback).
+- **`use_system_lib` NOT required for the dmabuf path.** Without it, the
+  `ImportAll` blanket is `Renderer + ImportMemWl + ImportDmaWl`
+  (renderer/mod.rs:704) — handles wl_shm + zwp_linux_dmabuf, which is exactly
+  what we need (weston-simple-egl uses zwp_linux_dmabuf). It IS required for
+  wl_drm/EGL-buffer import (`ImportEgl for GlesRenderer`, gles/mod.rs:1092) —
+  and note it flips `wayland-backend` to system `libwayland-server` across the
+  whole build (feature unification).
+
+Probe-and-fallback structure:
+
+```text
+fn build_renderer(display_handle: &DisplayHandle)
+    -> (OffscreenRenderer<R>, Option<GlesDmabufSetup>)  // setup = (dev_t, Vec<Format>)
+  1. Probe Gles path; on ANY failure log + fall back to pixman:
+       for each /dev/dri/renderD*:
+         std::fs::File::open(path)
+         GbmDevice::new(fd)                                  // gbm 0.18
+         unsafe { EGLDisplay::new(gbm_dev)? }                // egl/display.rs:201
+         EGLContext::new(&display)?                          // egl/context.rs:119
+         unsafe { GlesRenderer::new(context)? }              // gles/mod.rs:468
+         if display.dmabuf_render_formats() is empty -> treat as failure
+         (optional) renderer.bind_wl_display(display_handle) // only w/ use_system_lib
+  2. Gles ok  -> OffscreenRenderer::<GlesRenderer>::new_gles(renderer, w, h)
+                 + dmabuf global: DmabufState::new()
+                 + DmabufFeedbackBuilder::new(dev_t, formats.iter().copied()).build()?
+                 + dmabuf_state.create_global_with_default_feedback::<State>(&dh, &fb)
+                 dev_t = DrmNode::from_path(path)?.dev_id()
+                 formats = display.dmabuf_render_formats()
+  3. Gles fail -> OffscreenRenderer::<PixmanRenderer>::new_pixman(w, h), NO dmabuf global
+```
+
+Files that change:
+- `Cargo.toml` (workspace) — smithay features (see above).
+- `crates/server/src/rendering/mod.rs` — generic `OffscreenRenderer<R>` +
+  `new_pixman`/`new_gles` ctors (the mechanical changes listed above).
+- `crates/server/src/rendering/egl.rs` (new) — the probe chain + format/dev_t
+  collection (keeps lib.rs small).
+- `crates/server/src/state.rs` — `dmabuf_state: DmabufState` field (created
+  unconditionally in `State::new`, cheap), `dmabuf_global: Option<DmabufGlobal>`
+  (set only on the Gles path), `impl DmabufHandler for State`
+  (`dmabuf_imported` → `self.renderer`'s `import_dmabuf` + notifier reply),
+  `delegate_dmabuf!(State);` next to the other delegates (state.rs:638-645).
+- `crates/server/src/lib.rs` — replace the `OffscreenRenderer::new` call at
+  :69 with the probe; register the dmabuf global right after `State::new`
+  (:60) since `DmabufHandler` is implemented by `State`.
+
+Blockers/surprises that shape the design:
+- `EGLDisplay::new` and `GlesRenderer::new` are `unsafe` (context must not be
+  current on another thread) — wrap in `unsafe` blocks with the safety comment.
+- `GlesRenderer` is `!Send` — fine, `State` never leaves the compositor thread.
+- `bind_wl_display` is NOT needed for zwp_linux_dmabuf (that's the wl_drm/EGL
+  path) — earlier notes saying "must be called for any dmabuf import" are
+  wrong; it only matters if we later want wl_drm buffers (needs `use_system_lib`).
+- Pixman fallback *could* advertise a dmabuf global (it implements `ImportDma`
+  @1167 via CPU mapping, linear formats only) — NOT advertising it on the
+  pixman path is a design choice (MVP semantics), not an API constraint.
+- rustix `dev_t` (from `DrmNode::dev_id`) vs `libc::dev_t` (feedback builder
+  param) are both `u64` on linux — value-identical, cast if the compiler
+  complains about distinct aliases.
+- `Offscreen<GlesTexture>::create_buffer` only accepts RGBA8/BGRA_EXT/10-bit
+  formats — Argb8888 maps to BGRA_EXT and is fine (gles/format.rs:21).
+- On gary-agents, `EGLDevice::enumerate()`/string queries degrade (glvnd
+  returns null per-device strings — see Step 4 above), so glob
+  `/dev/dri/renderD*` rather than relying on `try_get_render_node`.
 
 ## Current server import limit (pixman/shm only)
 
@@ -418,7 +750,7 @@ the software path fails on this box:
 
 ## What it would take (GPU-backed box, e.g. gary-agents)
 
-1. `Cargo.toml`: add `renderer_glow`, `backend_gbm` to smithay features (keep
+1. `Cargo.toml`: add `renderer_gl`, `backend_gbm` to smithay features (keep
    `wayland_frontend`, optionally keep `renderer_pixman` as fallback).
 2. `apt-get install libgbm-dev libdrm-dev` (build deps; EGL itself is loaded at runtime
    via libloading so `libegl-dev` is not strictly required to compile).

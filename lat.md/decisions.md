@@ -20,6 +20,12 @@ Software rendering via Smithay's `renderer_pixman` feature for the MVP.
 
 No GPU dependency on the critical path, deterministic testing, and wl_shm clients cover the MVP test story. GL/dmabuf rendering is PRD §7 future work.
 
+### EGL / GPU probe (dormant)
+
+A render-node probe builds a Smithay `GlesRenderer` (EGL/GL) to enable dmabuf clients; it is dormant until wired into `run` (issue 09b/09c).
+
+[[crates/server/src/rendering/egl.rs#probe]] globs `/dev/dri/renderD*` (sorted) and returns the first node where `File → GbmDevice → EGLDisplay → EGLContext → GlesRenderer` all succeed, as a `GlesSetup` (the `!Send` renderer + the node's `dev_t` + the display's dmabuf render formats); a per-node failure logs the path and error and the next node is tried, and `None` (fall back to pixman) when none works. It enables Smithay's `renderer_gl` + `backend_gbm` features (EGL is loaded at runtime via libloading, so no `libegl-dev` to build; `libgbm-dev`/`libdrm-dev` are) and adds a direct `libc` dep for the `dev_t` the `zwp_linux_dmabuf` feedback builder takes. A GPU-less box cannot import dmabuf in smithay 0.7.0 (see `egl-dmabuf-feasibility`), so the pixman fallback stays the default.
+
 ### Transport
 
 QUIC via quinn from day one.

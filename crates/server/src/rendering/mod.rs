@@ -6,6 +6,8 @@
 //! produced bytes are exactly what the wire carries (issue 05), so GDI can blit
 //! them with zero conversion.
 
+pub mod egl;
+
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::pixman::{PixmanRenderer, PixmanTexture};
 use smithay::backend::renderer::{

@@ -31,6 +31,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 bytes = "1.12.1"
 image = "0.25.10"
+libc = "0.2"
 windows-sys = { version = "0.61.2", features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
