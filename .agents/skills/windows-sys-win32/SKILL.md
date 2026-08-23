@@ -482,6 +482,112 @@ not) and correct. Prefer `BITMAPINFO::default()` then set header fields over a
 full struct literal, so the `bmiColors` and the unused header fields are zeroed
 without you listing them.
 
+## Custom cursor (HCURSOR from a BGRA sprite)
+
+The server sends cursor shapes as a 32-bit BGRA sprite (raw `width*height*4`
+bytes, top-down, `[B, G, R, A]` per pixel — the same pixman readback layout the
+`StretchDIBits` blit above consumes). Turn it into a native `HCURSOR` and drive
+show/position/hide/destroy from the UI thread.
+
+**Feature note (corrects the common assumption):** ALL five cursor calls live
+in `Win32_UI_WindowsAndMessaging` (they are `user32.dll` exports), NOT in
+`Win32_Graphics_Gdi` or `Win32_UI_Input_KeyboardAndMouse`. That feature is
+already declared, so there is **no feature gap** — do not add any.
+
+Verified against `windows-sys = "0.61.2"`
+(`registry/.../windows-sys-0.61.2/src/Windows/Win32/UI/WindowsAndMessaging/mod.rs`,
+lines 55/85/383/384/432 — none is cfg-gated beyond the module's own
+`Win32_UI_WindowsAndMessaging` gate, confirmed at `Win32/UI/mod.rs:21`):
+
+| Function | windows-sys 0.61.2 signature |
+|---|---|
+| `CreateCursor` | `(hinst: HINSTANCE, xhotspot: i32, yhotspot: i32, nwidth: i32, nheight: i32, pvandplane: *const c_void, pvxorplane: *const c_void) -> HCURSOR` |
+| `SetCursor` | `(hcursor: HCURSOR) -> HCURSOR` (returns the **previous** thread cursor) |
+| `SetCursorPos` | `(x: i32, y: i32) -> BOOL` (screen-absolute) |
+| `ShowCursor` | `(bshow: BOOL) -> i32` (returns the new reference count) |
+| `DestroyCursor` | `(hcursor: HCURSOR) -> BOOL` |
+
+Types: `HCURSOR = *mut c_void` (defined in `Win32::UI::WindowsAndMessaging`,
+so import it from there — it is **not** in `Foundation`); `HINSTANCE = *mut
+c_void` (`Foundation`); `BOOL = i32` (`windows_sys::core`). All raw pointers /
+integers, so `0 as HCURSOR` is the null handle and values are `Copy`.
+
+```rust
+use windows_sys::Win32::Foundation::HINSTANCE;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CreateCursor, SetCursor, SetCursorPos, ShowCursor, DestroyCursor, HCURSOR,
+};
+
+/// Build a native 32-bit alpha cursor from a top-down BGRA sprite.
+/// `data` must be exactly `width*height*4` bytes, top-down, `[B,G,R,A]`/pixel
+/// (little-endian `0x00AABBGGRR`) — the pixman/server readback layout, unchanged.
+/// Returns a caller-owned HCURSOR (0 on failure); DestroyCursor it before
+/// replacing or at shutdown. Run on the UI thread.
+fn make_cursor(data: &[u8], width: u32, height: u32, hot_x: i32, hot_y: i32) -> HCURSOR {
+    assert_eq!(data.len(), (width * height * 4) as usize, "sprite is width*height*4 BGRA");
+    unsafe {
+        CreateCursor(
+            0 as HINSTANCE,                          // hInstance (unused for cursor data)
+            hot_x, hot_y,                            // i32, signed — negative/edge hotspots OK
+            width as i32, height as i32,
+            core::ptr::null(),                       // pvAndPlane = NULL (32-bit alpha path)
+            data.as_ptr() as *const core::ffi::c_void, // pvXorPlane = the BGRA sprite
+        )
+    }
+}
+
+// Drive it (UI thread only):
+let hcur = make_cursor(&sprite.data, sprite.width, sprite.height, sprite.hot_x, sprite.hot_y);
+if !hcur.is_null() {
+    unsafe {
+        SetCursor(hcur);     // sets the *thread* cursor; returns the previous HCURSOR
+        SetCursorPos(x, y);  // move the pointer to a screen-absolute (x, y)
+    }
+}
+// ... later, before overwriting `hcur` or at shutdown:
+if !hcur.is_null() { unsafe { DestroyCursor(hcur) }; }
+```
+
+`&[u8]` is what you pass in; a `Vec<u8>` coerces to it. `CreateCursor` **copies**
+the pixel data into the new cursor, so `data` only needs to be live for the call
+(the returned `HCURSOR` is independent of the source buffer afterwards).
+
+**The AND-mask decision (the fiddly part) — pass `NULL`.** For a 32-bit cursor,
+Windows derives per-pixel transparency from the **alpha byte of the XOR mask**
+(the high byte of each 32-bit BGRA pixel): `0` = fully transparent, `255` =
+fully opaque. That path is selected **precisely** by passing `pvAndPlane =
+NULL`. A 1-bit `pvAndPlane` would (a) be laid out **bottom-up**, 1 bit/pixel,
+rows padded to 32 bits, and (b) force any pixel whose AND bit is set fully
+transparent *regardless of its alpha byte* — the legacy 1-bit-cursor model,
+extra work, and wrong for a smooth-alpha sprite. So: XOR = BGRA sprite, AND =
+`NULL`.
+
+**Byte order / flip (no conversion):** `CreateCursor` wants the XOR mask
+top-down, 32 bits/pixel — exactly the sprite's native layout (identical to the
+`StretchDIBits` blit above). No byte swap, no vertical flip. (Unlike a DIB, where
+a positive `biHeight` means bottom-up, a cursor's `nheight` is always positive
+and its rows are always top-down.)
+
+**Pre-multiplied-alpha caveat:** the RGB channels must be **straight**
+(un-premultiplied) — which is what pixman's `Argb8888` readback gives. If a
+semi-transparent anti-aliased edge shows a color fringe, premultiply
+`RGB *= A/255` before creating. Not needed for the usual opaque-center cursor.
+
+**Hotspot:** `xhotspot`/`yhotspot` are **`i32` (signed)** — pass `hot_x`/`hot_y`
+straight through; a negative or out-of-bounds hotspot is legal (the cursor is
+positioned so that pixel sits on the pointer).
+
+**Reference counting (`ShowCursor`):** initial count is `0` (visible).
+`ShowCursor(0)` (FALSE) decrements → hidden at `< 0`; `ShowCursor(1)` (TRUE)
+increments → visible again at `>= 0`. Every hide must be paired with a later
+show, so track a hidden flag rather than calling blindly; the return value is the
+new count.
+
+**Thread:** call all five from the UI thread (the "only the UI thread touches
+the cursor/GDI" rule). `SetCursor` sets the *thread* cursor, so run it on the
+thread that pumps the window's messages; `SetCursorPos`/`ShowCursor` are
+process-wide but do them on the UI thread for consistency.
+
 ## Input translation (WM_KEY*, WM_MOUSE*, WM_MOUSEWHEEL)
 
 All pure-logic translation already exists in `crates/viewer/src/input.rs`
