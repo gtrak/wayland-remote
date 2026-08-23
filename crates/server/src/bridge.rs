@@ -103,6 +103,8 @@ mod tests {
             height: 1,
             stride: 4,
             window_id: 7,
+            render_ns: 0,
+            readback_ns: 0,
         };
         compositor
             .frame_tx

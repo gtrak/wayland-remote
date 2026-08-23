@@ -179,7 +179,7 @@ pub fn run(
                             match state.render_frame() {
                                 Ok(frame) => {
                                     let _ = reply.send(frame.clone());
-                                    state.telemetry.record_frame(frame.data.len());
+                                    state.telemetry.record_frame(frame.data.len(), frame.render_ns, frame.readback_ns);
                                     push_frame(&bridge_tx, &counter, frame);
                                 }
                                 Err(err) => {
@@ -245,7 +245,7 @@ pub fn run(
                             Ok(frame) => {
                                 let _ = reply.send(frame.clone());
                                 if let Some(tx) = &frame_tx {
-                                    state.telemetry.record_frame(frame.data.len());
+                                    state.telemetry.record_frame(frame.data.len(), frame.render_ns, frame.readback_ns);
                                     push_frame(tx, &frame_counter, frame);
                                 }
                             }
@@ -293,7 +293,16 @@ pub fn run(
             for window_id in state.window_manager.mapped_windows() {
                 match state.render_window(window_id) {
                     Ok(frame) => {
-                        state.telemetry.record_frame(frame.data.len());
+                        tracing::debug!(
+                            window_id,
+                            width = frame.width,
+                            height = frame.height,
+                            render_ns = frame.render_ns,
+                            readback_ns = frame.readback_ns,
+                            full_bytes = frame.data.len(),
+                            "frame rendered"
+                        );
+                        state.telemetry.record_frame(frame.data.len(), frame.render_ns, frame.readback_ns);
                         push_frame(&tx, &frame_counter, frame);
                     }
                     Err(err) => {
@@ -311,6 +320,8 @@ pub fn run(
                 fps = snap.frames_per_sec,
                 frames = snap.frames_total,
                 bytes = snap.frame_bytes_total,
+                render_ms = snap.render_ms,
+                readback_ms = snap.readback_ms,
                 commits = snap.commits_total,
                 inputs = snap.input_events_total,
                 in2commit = ?snap.last_input_to_commit_ms,

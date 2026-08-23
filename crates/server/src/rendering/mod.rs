@@ -42,6 +42,12 @@ pub struct FrameBuffer {
     pub stride: u32,
     /// The window this frame was rendered for; 0 for a full-desktop composite.
     pub window_id: u64,
+    /// Render-pass time in nanoseconds (`create_buffer` through `finish`/`wait`);
+    /// 0 when not measured.
+    pub render_ns: u64,
+    /// PBO/pixman readback time in nanoseconds (`copy_framebuffer` + `map_texture`);
+    /// 0 when not measured.
+    pub readback_ns: u64,
 }
 
 impl FrameBuffer {
@@ -192,6 +198,8 @@ where
             height: self.height,
             stride: self.width * 4,
             window_id: 0,
+            render_ns: 0,
+            readback_ns: 0,
         })
     }
 
@@ -266,6 +274,8 @@ where
             height,
             stride: width * 4,
             window_id: 0,
+            render_ns: 0,
+            readback_ns: 0,
         })
     }
 
@@ -315,6 +325,7 @@ where
 
         // Create the offscreen pixel buffer and bind it as the render target.
         let buf_size: Size<i32, BufferCoord> = (w, h).into();
+        let render_start = std::time::Instant::now();
         let mut image = self.renderer.create_buffer(Fourcc::Argb8888, buf_size)?;
         let mut target = self.renderer.bind(&mut image)?;
 
@@ -370,13 +381,16 @@ where
             .finish()?
             .wait()
             .map_err(|_| anyhow::anyhow!("render sync point interrupted"))?;
+        let render_ns = render_start.elapsed().as_nanos() as u64;
 
         // Read the framebuffer back as a contiguous BGRA buffer.
+        let readback_start = std::time::Instant::now();
         let region: Rectangle<i32, BufferCoord> = Rectangle::new(Point::new(0, 0), Size::new(w, h));
         let mapping = self
             .renderer
             .copy_framebuffer(&target, region, Fourcc::Argb8888)?;
         let pixels = self.renderer.map_texture(&mapping)?;
+        let readback_ns = readback_start.elapsed().as_nanos() as u64;
 
         Ok(FrameBuffer {
             data: pixels.to_vec(),
@@ -384,6 +398,8 @@ where
             height,
             stride: width * 4,
             window_id: 0,
+            render_ns,
+            readback_ns,
         })
     }
 

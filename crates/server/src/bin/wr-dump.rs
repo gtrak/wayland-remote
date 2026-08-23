@@ -252,6 +252,8 @@ async fn read_frame(
         height: header_out.height,
         stride: header_out.stride,
         window_id: header_out.window_id,
+        render_ns: 0,
+        readback_ns: 0,
     })
 }
 

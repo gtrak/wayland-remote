@@ -215,6 +215,8 @@ mod tests {
                     height: 1,
                     stride: 4,
                     window_id: 0,
+                    render_ns: 0,
+                    readback_ns: 0,
                 },
                 frame_id: id + 1,
             })

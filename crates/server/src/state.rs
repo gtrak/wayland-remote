@@ -130,6 +130,8 @@ pub struct Telemetry {
     frames_total: u64,
     frames_this_second: u64,
     frame_bytes_total: u64,
+    render_ns_this_second: u64,
+    readback_ns_this_second: u64,
     commits_total: u64,
     input_events_total: u64,
     last_input_at: Option<Instant>,
@@ -144,6 +146,8 @@ pub struct TelemetrySnapshot {
     pub frames_per_sec: u64,
     pub frames_total: u64,
     pub frame_bytes_total: u64,
+    pub render_ms: u64,
+    pub readback_ms: u64,
     pub commits_total: u64,
     pub input_events_total: u64,
     pub last_input_to_commit_ms: Option<u32>,
@@ -159,6 +163,8 @@ impl Telemetry {
             frames_total: 0,
             frames_this_second: 0,
             frame_bytes_total: 0,
+            render_ns_this_second: 0,
+            readback_ns_this_second: 0,
             commits_total: 0,
             input_events_total: 0,
             last_input_at: None,
@@ -190,11 +196,14 @@ impl Telemetry {
         self.last_input_at = Some(Instant::now());
     }
 
-    /// Record a streamed frame of `bytes` payload size.
-    pub fn record_frame(&mut self, bytes: usize) {
+    /// Record a streamed frame of `bytes` payload size, with `render_ns` and
+    /// `readback_ns` render/readback timings (nanoseconds, 0 when not measured).
+    pub fn record_frame(&mut self, bytes: usize, render_ns: u64, readback_ns: u64) {
         self.frames_total += 1;
         self.frames_this_second += 1;
         self.frame_bytes_total += bytes as u64;
+        self.render_ns_this_second += render_ns;
+        self.readback_ns_this_second += readback_ns;
     }
 
     /// Record a recoverable error (failed render/snapshot).
@@ -213,18 +222,25 @@ impl Telemetry {
     /// since the last snapshot, also publish and reset the per-second frame
     /// rate; otherwise `frames_per_sec` is 0 and the window keeps counting.
     pub fn snapshot(&mut self) -> TelemetrySnapshot {
-        let frames_per_sec = if self.second_start.elapsed() >= Duration::from_secs(1) {
-            let fps = self.frames_this_second;
-            self.frames_this_second = 0;
-            self.second_start = Instant::now();
-            fps
-        } else {
-            0
-        };
+        let (frames_per_sec, render_ms, readback_ms) =
+            if self.second_start.elapsed() >= Duration::from_secs(1) {
+                let fps = self.frames_this_second;
+                let render_ms = self.render_ns_this_second / 1_000_000;
+                let readback_ms = self.readback_ns_this_second / 1_000_000;
+                self.frames_this_second = 0;
+                self.render_ns_this_second = 0;
+                self.readback_ns_this_second = 0;
+                self.second_start = Instant::now();
+                (fps, render_ms, readback_ms)
+            } else {
+                (0, 0, 0)
+            };
         TelemetrySnapshot {
             frames_per_sec,
             frames_total: self.frames_total,
             frame_bytes_total: self.frame_bytes_total,
+            render_ms,
+            readback_ms,
             commits_total: self.commits_total,
             input_events_total: self.input_events_total,
             last_input_to_commit_ms: self.last_input_to_commit_ms,

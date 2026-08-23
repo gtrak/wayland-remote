@@ -339,10 +339,12 @@ async fn write_frame(
     frame_id: u64,
     compression: Compression,
 ) -> anyhow::Result<()> {
+    let compress_start = std::time::Instant::now();
     let payload = match compression {
         Compression::Lz4 => wayland_remote_protocol::compress(&frame.data),
         Compression::None => frame.data.clone(),
     };
+    let compress_us = compress_start.elapsed().as_micros() as u64;
     let header = FrameHeader {
         magic: FRAME_MAGIC,
         frame_id,
@@ -363,5 +365,12 @@ async fn write_frame(
     let mut send = conn.open_uni().await?;
     send.write_all(&bytes).await?;
     send.finish()?;
+    tracing::debug!(
+        window_id = frame.window_id,
+        full_bytes = frame.data.len(),
+        sent_bytes = payload.len(),
+        compress_us,
+        "frame sent"
+    );
     Ok(())
 }
