@@ -37,3 +37,13 @@ highest-value CPU/GPU saver and the prerequisite for issues 03 and 04.
 - Moving the pointer still moves the visible cursor (pre-04) — no "frozen cursor".
 - `cargo test --workspace` green (input round-trip test included); drive harness
   `--client weston-flower` and `--client weston-simple-egl` still PASS.
+
+## Result (measured at `9d83857`, gary-agents)
+
+- **Animating (no regression):** `weston-flower` PASS (pixel change frame 1),
+  `weston-simple-egl` PASS (pixel change frame 1). Both still re-render every frame —
+  no frozen animation.
+- **Static win (`weston-clickdot`):** rendered exactly **2 frames** (the initial map),
+  then every subsequent second shows `fps=0 render_ms=0 readback_ms=0`. Before 02 a
+  static window re-rendered + re-streamed every tick (issue 01: ~2.6 ms/frame); now it
+  costs nothing while idle.
