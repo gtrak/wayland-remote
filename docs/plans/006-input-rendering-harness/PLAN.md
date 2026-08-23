@@ -103,3 +103,4 @@ decision in 08), multi-viewer.
 - `06-subsurface-viewporter.md`
 - `07-additional-globals.md`
 - `08-egl-dmabuf-research.md`
+- `09-egl-dmabuf-import.md`

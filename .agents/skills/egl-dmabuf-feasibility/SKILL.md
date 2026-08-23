@@ -11,6 +11,8 @@ description: >-
 
 # EGL / dmabuf Feasibility for wayland-remote (issue 08)
 
+**STATUS: IMPLEMENTED (issue 09).** The EGL/dmabuf import path now ships: `rendering/egl.rs#probe` picks a GL renderer when a DRM render node works (pixman fallback otherwise), the `zwp_linux_dmabuf` global is advertised on the GL path, and `weston-simple-egl` renders end-to-end (dmabuf→GlesRenderer→PBO readback). See the "Implementation (issue 09)" section near the bottom for what was built + the one real gotcha (dmabuf buffer dimensions). The feasibility research below is the evidence base for that decision.
+
 Research-only deliverable. Verdict up front: **the EGL/dmabuf path is feasible
 on gary-agents because it actually has NVIDIA GPUs — but a truly GPU-less
 headless box CANNOT import dmabuf in smithay 0.7.0** (no wgpu renderer,
@@ -789,3 +791,52 @@ plan above (the NVIDIA hw-EGL path works and is the reliable route). If the targ
 GPU-less / virtio-only, this stays deferred pending either verification of the
 software-GBM path on an actual virtio-gpu VM or a smithay wgpu/lavapipe renderer. This
 skill file is the scoping artifact so the follow-up doesn't re-research any of the above.
+
+## Implementation (issue 09 — what actually shipped)
+
+The feature was implemented and verified live (`weston-simple-egl` renders its 3D scene:
+1280×720, 27k+ unique colors through dmabuf→GlesRenderer→PBO readback). Committed as
+09a (probe), 09b (generic renderer + `Offscreen` enum + `run()` wiring), 09c (dmabuf
+global), + a dmabuf-dimension bug fix.
+
+- **Features:** `crates/server` enables smithay `renderer_gl` + `backend_gbm` (NOT
+  `use_system_lib` — the `not(all(backend_egl, use_system_lib))` `ImportAll` blanket
+  impl handles Shm + Dma, which is exactly what `zwp_linux_dmabuf` clients need). Build
+  needs `libgbm-dev`/`libdrm-dev`; gary-agents lacks TTY sudo, so the linker finds them
+  via hand-made `~/lib/libgbm.so`/`libdrm.so`→`.so.1` symlinks referenced from
+  `~/.cargo/config.toml` (`rustflags = ["-L", "/home/gary/lib"]`).
+- **Probe:** `rendering/egl.rs#probe` globs `/dev/dri/renderD*` (sorted), per node
+  `File::open → gbm::Device::new → EGLDisplay::new → (capture dmabuf_render_formats +
+  DrmNode::from_path(path).dev_id()) → EGLContext::new → GlesRenderer::new`; first
+  success → `GlesSetup { renderer, main_device, formats }`, else `None`.
+- **Generic renderer:** `OffscreenRenderer<R, T>` (`R: Renderer + ImportAll +
+  Offscreen<T> + Bind<T> + ExportMem`, `R::Error: Error + Send + Sync + 'static`).
+  `T` is the offscreen target: `GlesTexture` (GL) vs `smithay::reexports::pixman::Image
+  <'static,'static>` (pixman). `_target: PhantomData<T>`; the `Offscreen` TRAIT is
+  aliased `Offscreen as OffscreenTarget` (collides with the `Offscreen` ENUM); the
+  `Gl` variant is `Box<…>` (clippy large_enum_variant). `Offscreen { Software, Gl }`
+  forwards `render`/`render_surface`/`render_window_surface`.
+- **dmabuf global:** `State::new` takes `dmabuf_global: Option<(dev_t, Vec<Format>)>`;
+  only when `Some` builds `DmabufFeedbackBuilder::new(dev, formats).build()?` +
+  `dmabuf_state.create_global_with_default_feedback::<State>(…)`. `DmabufHandler`
+  acknowledges via `notifier.successful::<State>()`; the texture imports lazily at render
+  time (`import_buffer → import_dmabuf`). `delegate_dmabuf!(State)`. `BufferHandler`
+  was already impl'd on `State`.
+- **`import_dmabuf` needs NO `egl_reader`/`bind_wl_display`** — it uses
+  `self.egl.display().create_image_from_dmabuf(buffer)` (needs the display's
+  `EGL_EXT_image_dma_buf_import`, which the GBM display advertises). That earlier "needs
+  egl_reader" note applied only to the wl_drm/EGL-buffer path.
+
+### THE GOTCHA — dmabuf buffer dimensions (the real bug)
+`with_buffer_contents` (smithay::wayland::shm) resolves **SHM** buffers only — it looks
+for `ShmBufferUserData` in the buffer data map and returns `NotManaged` for a dmabuf
+buffer (whose data is `Dmabuf`). The commit handler used it to read the committed
+buffer's width/height with `.unwrap_or((0,0))`, so **dmabuf windows mapped at 0×0** and
+the GL offscreen FBO bind failed (`GlesError::FramebufferBindingError`, "Failed to bind
+Framebuffer"), producing no frames. Fix: in the commit dimension lookup, after
+`with_buffer_contents(…).ok()`, add
+`.or_else(|| get_dmabuf(buffer).ok().map(|d| (d.width() as i32, d.height() as i32)))`
+(`get_dmabuf` from `smithay::wayland::dmabuf`; `Dmabuf: Buffer` has `width()/height()
+-> u32`). Lesson: any code reading a committed buffer's size/type must handle BOTH shm
+(`with_buffer_contents`) and dmabuf (`get_dmabuf`); the render path is fine because it
+goes through `import_buffer` (which dispatches by buffer type).
