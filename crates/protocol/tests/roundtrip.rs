@@ -72,6 +72,20 @@ fn message_roundtrip() {
             height: 600,
         },
         Message::CloseWindow { window_id: 7 },
+        Message::CursorShape {
+            window_id: 7,
+            width: 4,
+            height: 4,
+            hot_x: 3,
+            hot_y: 5,
+            data: vec![0xAA; 64],
+        },
+        Message::CursorMove {
+            window_id: 7,
+            x: 10.5,
+            y: -2.25,
+        },
+        Message::CursorHide { window_id: 7 },
     ];
     for msg in &messages {
         let mut buf = Vec::new();

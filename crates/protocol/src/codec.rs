@@ -5,7 +5,8 @@
 //! varint tag identifying the variant:
 //!
 //! - `Message`: Hello=1, Input=2, Welcome=3, WindowEvent=4, Ping=5, Pong=6,
-//!   SetFocus=7, ConfigureWindow=8, CloseWindow=9
+//!   SetFocus=7, ConfigureWindow=8, CloseWindow=9, CursorShape=10,
+//!   CursorMove=11, CursorHide=12
 //! - `InputEvent`: KeyDown=1, KeyUp=2, PointerMove=3, PointerButton=4, Axis=5
 //! - `WindowEventKind`: Created=1, Destroyed=2, Resized=3, Focused=4,
 //!   Unfocused=5
@@ -24,6 +25,8 @@ pub enum DecodeError {
     Io(#[from] io::Error),
     #[error("string too large (max 16 KiB)")]
     StringTooLarge,
+    #[error("byte array too large (max {0} bytes)")]
+    BytesTooLarge(usize),
     #[error("frame too large (max 64 MiB)")]
     FrameTooLarge,
     #[error("bad frame magic")]
@@ -96,6 +99,11 @@ fn write_u32(v: u32, w: &mut impl io::Write) -> io::Result<()> {
     w.write_all(&v.to_le_bytes())
 }
 
+/// Write a little-endian `i32`.
+fn write_i32(v: i32, w: &mut impl io::Write) -> io::Result<()> {
+    w.write_all(&v.to_le_bytes())
+}
+
 /// Write a little-endian `u64`.
 fn write_u64(v: u64, w: &mut impl io::Write) -> io::Result<()> {
     w.write_all(&v.to_le_bytes())
@@ -123,6 +131,13 @@ fn read_u32(r: &mut impl io::Read) -> Result<u32, DecodeError> {
     let mut b = [0u8; 4];
     r.read_exact(&mut b).map_err(eof_or)?;
     Ok(u32::from_le_bytes(b))
+}
+
+/// Read a little-endian `i32`.
+fn read_i32(r: &mut impl io::Read) -> Result<i32, DecodeError> {
+    let mut b = [0u8; 4];
+    r.read_exact(&mut b).map_err(eof_or)?;
+    Ok(i32::from_le_bytes(b))
 }
 
 /// Read a little-endian `u64`.
@@ -165,6 +180,23 @@ fn read_string(r: &mut impl io::Read) -> Result<String, DecodeError> {
     std::str::from_utf8(&buf)
         .map(String::from)
         .map_err(DecodeError::InvalidUtf8)
+}
+
+/// Write a byte array as `varint(len) || bytes`.
+fn write_bytes(b: &[u8], w: &mut impl io::Write) -> io::Result<()> {
+    encode_varint(b.len() as u64, w)?;
+    w.write_all(b)
+}
+
+/// Read a byte array encoded as `varint(len) || bytes`, enforcing a length cap.
+fn read_bytes(r: &mut impl io::Read, max: usize) -> Result<Vec<u8>, DecodeError> {
+    let len = decode_varint(r)? as usize;
+    if len > max {
+        return Err(DecodeError::BytesTooLarge(max));
+    }
+    let mut buf = vec![0u8; len];
+    r.read_exact(&mut buf).map_err(eof_or)?;
+    Ok(buf)
 }
 
 /// Encode a [`Message`] as `varint(len) || tag || fields`.
@@ -228,6 +260,36 @@ pub fn encode_message(msg: &Message, w: &mut impl io::Write) -> io::Result<()> {
             encode_varint(9, &mut buf)?;
             write_u64(*window_id, &mut buf)?;
         }
+        Message::CursorShape {
+            window_id,
+            width,
+            height,
+            hot_x,
+            hot_y,
+            data,
+        } => {
+            encode_varint(10, &mut buf)?;
+            write_u64(*window_id, &mut buf)?;
+            write_u32(*width, &mut buf)?;
+            write_u32(*height, &mut buf)?;
+            write_i32(*hot_x, &mut buf)?;
+            write_i32(*hot_y, &mut buf)?;
+            write_bytes(data, &mut buf)?;
+        }
+        Message::CursorMove {
+            window_id,
+            x,
+            y,
+        } => {
+            encode_varint(11, &mut buf)?;
+            write_u64(*window_id, &mut buf)?;
+            write_f64(*x, &mut buf)?;
+            write_f64(*y, &mut buf)?;
+        }
+        Message::CursorHide { window_id } => {
+            encode_varint(12, &mut buf)?;
+            write_u64(*window_id, &mut buf)?;
+        }
     }
     encode_varint(buf.len() as u64, w)?;
     w.write_all(&buf)
@@ -286,6 +348,30 @@ pub fn decode_message(r: &mut impl io::Read) -> Result<Message, DecodeError> {
             height: read_u32(&mut cursor)?,
         }),
         9 => Ok(Message::CloseWindow {
+            window_id: read_u64(&mut cursor)?,
+        }),
+        10 => {
+            let window_id = read_u64(&mut cursor)?;
+            let width = read_u32(&mut cursor)?;
+            let height = read_u32(&mut cursor)?;
+            let hot_x = read_i32(&mut cursor)?;
+            let hot_y = read_i32(&mut cursor)?;
+            let data = read_bytes(&mut cursor, 256 * 1024)?;
+            Ok(Message::CursorShape {
+                window_id,
+                width,
+                height,
+                hot_x,
+                hot_y,
+                data,
+            })
+        }
+        11 => Ok(Message::CursorMove {
+            window_id: read_u64(&mut cursor)?,
+            x: read_f64(&mut cursor)?,
+            y: read_f64(&mut cursor)?,
+        }),
+        12 => Ok(Message::CursorHide {
             window_id: read_u64(&mut cursor)?,
         }),
         tag => Err(DecodeError::UnknownMessageTag(tag)),

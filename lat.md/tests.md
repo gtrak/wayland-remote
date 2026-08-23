@@ -12,7 +12,7 @@ Protocol wire-format tests covering message round-trips, error injection, the lz
 
 ### Message round-trip
 
-Every `Message` variant encodes and decodes to an equal value across strings, f64s, and enum arms.
+Every `Message` variant encodes and decodes to an equal value across strings, f64s, i32s, bounded byte arrays (cursor sprite), and enum arms.
 
 ### Truncation safety
 

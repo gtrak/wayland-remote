@@ -35,6 +35,25 @@ pub enum Message {
     },
     /// Viewer -> server: request the toplevel be closed (equivalent to clicking the close button).
     CloseWindow { window_id: u64 },
+    /// Compositor -> viewer: the pointer cursor sprite (BGRA), sent only when it
+    /// changes. `data` is `width * height * 4` bytes (BGRA, top-down).
+    CursorShape {
+        window_id: u64,
+        width: u32,
+        height: u32,
+        hot_x: i32,
+        hot_y: i32,
+        data: Vec<u8>,
+    },
+    /// Compositor -> viewer: move the pointer cursor to (x, y) within `window_id`
+    /// (window-local coordinates).
+    CursorMove {
+        window_id: u64,
+        x: f64,
+        y: f64,
+    },
+    /// Compositor -> viewer: hide the pointer cursor (over `window_id`).
+    CursorHide { window_id: u64 },
 }
 
 /// An input event forwarded from the Windows viewer to the Linux compositor.
