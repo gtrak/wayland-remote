@@ -29,7 +29,8 @@ below.
 | `weston-simple-egl` installed? | Yes, `/usr/bin/weston-simple-egl`. |
 | Software DRI / Vulkan? | `swrast_dri.so` + `kms_swrast_dri.so` present; Vulkan ICDs `lvp_icd.json` (lavapipe) + `nvidia_icd.json` present; `mesa-vulkan-drivers` 26.0.3 + `libvulkan1` 1.4.341 installed. `vulkaninfo` not installed. |
 | smithay 0.7.0 GL/EGL renderer? | `renderer_glow` feature → `GlesRenderer` (glow backend) in `src/backend/renderer/gles/`. **There is NO `renderer_egl` and NO `renderer_wgpu` feature.** |
-| Can surfaceless EGL import dmabuf? | **No.** `get_dmabuf_formats` returns empty sets unless the display advertises `EGL_EXT_image_dma_buf_import`, which a device-less (surfaceless) display does not. |
+| Can surfaceless EGL import dmabuf? | **Effectively no.** On Mesa 26 a surfaceless software display DOES advertise `EGL_EXT_image_dma_buf_import`, but on gary-agents it cannot create any GL context (all configs → `EGL_BAD_CONFIG`/`EGL_BAD_ATTRIBUTE`), so `get_dmabuf_formats`/`create_image_from_dmabuf`/`GlesRenderer` have nothing to render through. Dead end. See "Software-EGL-over-GBM fallback (llvmpipe)". |
+| Does GBM + software (llvmpipe) EGL work on gary-agents? | **No.** Mesa ICD `eglInitialize` FAILS on the NVIDIA render nodes (libgbm loads the NVIDIA GBM backend `nvidia-drm_gbm.so`; Mesa can't attach a software DRI driver). `LIBGL_ALWAYS_SOFTWARE=1` alone is ignored (NVIDIA ICD still used). Only the NVIDIA **hw** GBM path works and advertises dmabuf import. Unverified (not testable here) on a virtio-gpu / generic-`dri`-backend VM. See "Software-EGL-over-GBM fallback (llvmpipe)". |
 | Can a GPU-less box do EGL/dmabuf at all? | **No in smithay 0.7.0.** No render node → no GBM → no device-backed EGL display; no wgpu/lavapipe renderer; the EGL client itself also needs a render node to allocate its dmabuf. |
 | Current server import limit? | **wl_shm only.** `PixmanRenderer::import_buffer` in `crates/server/src/rendering/mod.rs`; `state.rs` has no `delegate_dmabuf`/`DmabufState`. |
 
@@ -287,6 +288,134 @@ virtual GPU) on the box. On gary-agents (which has 3x RTX 5060 Ti) that path wor
 a normal feature; on a truly headless no-GPU VM it is a hard blocker until either (a) we
 provision GPUs/vGPUs, or (b) a smithay wgpu/lavapipe renderer lands.
 
+## Software-EGL-over-GBM fallback (llvmpipe)
+
+**Verdict: NO — on gary-agents a GBM-backed *software* (llvmpipe/swrast) EGL
+display cannot be brought up at all, so it never reaches the point of
+advertising (or using) `EGL_EXT_image_dma_buf_import`.** The hypothesis
+"llvmpipe-over-GBM works on any box that has a DRM render node" is **NOT
+supported** by this box and is specifically broken when the render node is a
+vendor (NVIDIA) device. The only working dmabuf-import path on gary-agents is
+the NVIDIA **hardware** EGL path. Details + exact outputs below.
+
+Method note: `sudo apt-get install -y mesa-utils` requires interactive password
+auth (not available in this session), so `eglinfo` could not be installed.
+Instead a self-contained C probe (`/tmp/egl_gbm_probe.c`, compiled with gcc)
+dlopens `libEGL.so.1` + `libgbm.so.1`, declares the EGL prototypes itself,
+opens a render node, builds a `gbm_device`, creates a GBM platform display
+(`eglGetPlatformDisplay(EGL_PLATFORM_GBM_MESA=0x31D7, gbm_dev, NULL)`),
+initializes it, dumps vendor/version/extensions, creates a context for
+GL_VENDOR/RENDERER, and enumerates EGLDevices. Run via `ssh gary-agents`.
+
+### Step 2 — HW mode (NVIDIA ICD, GBM): works, dmabuf advertised
+
+```
+$ /tmp/egl_gbm_probe /dev/dri/renderD128
+EGL initialized: 1.5
+EGL_VENDOR     : NVIDIA
+EGL_VERSION    : 1.5
+EGL_CLIENT_APIS: OpenGL_ES OpenGL
+EGL_EXTENSIONS: ... EGL_EXT_image_dma_buf_import EGL_EXT_image_dma_buf_import_modifiers
+                EGL_MESA_image_dma_buf_export ... (full NVIDIA ext list)
+>>> EGL_EXT_image_dma_buf_import: PRESENT
+eglGetConfigs: ok=1 total=65
+GL_VENDOR    : NVIDIA Corporation
+GL_RENDERER  : NVIDIA GeForce RTX 5060 Ti/PCIe/SSE2
+GL_VERSION   : OpenGL ES 1.1 NVIDIA 595.84
+```
+
+Yes — this is the NVIDIA (hw) path, and it advertises dmabuf import. (The
+NVIDIA ICD is also fragile: a configless `eglCreateContext` segfaults it; a
+config from `eglGetConfigs` works and yields the strings above.)
+
+### Step 3 — Software mode (the crux): FAILS
+
+- `LIBGL_ALWAYS_SOFTWARE=1` **alone does NOT force software**: the NVIDIA ICD
+  is still selected (`EGL_VENDOR: NVIDIA`) because the proprietary driver
+  ignores that env var.
+- To force the Mesa ICD you must also restrict the ICD loader:
+  `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json`.
+  With that + `LIBGL_ALWAYS_SOFTWARE=1` — and also with
+  `GALLIUM_DRIVER=llvmpipe`, `MESA_LOADER_DRIVER_OVERRIDE=swrast`,
+  `__DRI_DRIVER=swrast` — **`eglInitialize` FAILS** (`eglGetError=0x3001`,
+  `EGL_NOT_INITIALIZED`) in every variant. No software GBM display comes up.
+
+Root cause (strace): for the NVIDIA render node, libgbm loads the **NVIDIA GBM
+backend** — `openat("/usr/lib/x86_64-linux-gnu/gbm/nvidia-drm_gbm.so")` (→
+`libnvidia-allocator.so.1`, from `libnvidia-extra-595`) — and Mesa then cannot
+attach a software DRI driver on top of it (it even probes `libnvtegrahv.so`,
+ENOENT) before `eglInitialize` returns false. Only two GBM backends exist on the
+box: the generic `dri_gbm.so` (Mesa) and `nvidia-drm_gbm.so` (NVIDIA). There is
+no virtio GBM backend present.
+
+### Software display that DOES init (surfaceless, non-GBM) — still a dead end
+
+`EGL_PLATFORM_SURFACELESS_MESA` + Mesa ICD + `LIBGL_ALWAYS_SOFTWARE=1` +
+`MESA_LOADER_DRIVER_OVERRIDE=swrast`:
+
+```
+EGL initialized: 1.5
+EGL_VENDOR     : Mesa Project
+>>> EGL_EXT_image_dma_buf_import: PRESENT      (it IS advertised)
+eglGetConfigs: ok=1 total=128                  (configs enumerated)
+eglCreateContext: fails for EVERY config
+    -> EGL_BAD_CONFIG (0x3003) with no attribs
+    -> EGL_BAD_ATTRIBUTE (0x3004) with EGL_CONTEXT_CLIENT_VERSION
+=> NO renderable GL context; GL_RENDERER cannot be read.
+```
+
+So even the non-GBM software display is a non-functional shell here: it
+advertises the dmabuf extension and lists configs, but **cannot create a
+context**. (Correction to the earlier TL;DR note: on Mesa 26 a surfaceless
+software display DOES advertise `EGL_EXT_image_dma_buf_import` — it is still a
+dead end, but for the reason "no context," not "extension not advertised.")
+
+### Step 4 — EGL device enumeration
+
+- NVIDIA (hw) dispatch: `eglQueryDevices` → **num EGLDevices = 7**.
+- Mesa swrast (surfaceless): **num EGLDevices = 1**.
+- `eglQueryDeviceString` / `eglQueryDeviceAttrib` resolve but return null/0 for
+  every device via the glvnd dispatch on this box, so per-device type (GPU vs
+  CPU) and name **cannot** be read here. (Counts only.)
+
+### smithay 0.7.0 requirement chain (confirmed from source)
+
+The code is **vendor-agnostic** (as hypothesized) but has a hard precondition
+the software path fails on this box:
+
+- `native.rs:147` — `impl EGLNativeDisplay for GbmDevice<A>` tries
+  `EGL_KHR_platform_gbm` then `EGL_MESA_platform_gbm` (both value 0x31D7),
+  passing the raw `gbm_device` pointer.
+- `display.rs` `EGLDisplay::new` (~line 248) — calls `eglInitialize`; on
+  failure returns `Error::InitFailed`. **A GBM display that cannot initialize
+  is a hard failure** — exactly what happens with Mesa software on the NVIDIA
+  nodes above.
+- `display.rs` `get_dmabuf_formats` (~line 868) — returns EMPTY
+  `dmabuf_render_formats` unless the display advertises
+  `EGL_EXT_image_dma_buf_import`; if `EGL_EXT_image_dma_buf_import_modifiers`
+  is also present it further requires `eglQueryDmaBufFormatsEXT` to return >0
+  formats (else empty). If only the base import extension is present it guesses
+  `{Argb8888, Xrgb8888}`. It **never inspects the GL vendor**.
+
+### Implication / updated recommendation
+
+- "Has a DRM render node" is **necessary but not sufficient** for the
+  llvmpipe-over-GBM fallback: the node's GBM backend and whether Mesa can attach
+  a (software) DRI driver both matter. On a vendor (NVIDIA) render node the
+  software GBM path does not come up at all.
+- The fallback *might* still work on a VM whose render node uses the **generic
+  `dri` GBM backend** (e.g. virtio-gpu / an open-source GPU) — that scenario is
+  **not testable on gary-agents** (no such device present) and remains
+  **UNVERIFIED**.
+- The **hw-EGL** path (NVIDIA here) is the reliable, working dmabuf-import
+  route on this box.
+- Recommendation: keep the "llvmpipe-over-GBM works anywhere" claim
+  **DEFERred / unproven**. The dmabuf/EGL feature is **IN SCOPE** for
+  deployment boxes with a working GPU driver (execute the scoped plan in
+  "What it would take"). If the production target is a GPU-less / virtio-only
+  VM, verify the software-GBM path on an **actual virtio-gpu VM** (or wait for
+  a smithay wgpu/lavapipe renderer) before promising EGL/dmabuf clients there.
+
 ## What it would take (GPU-backed box, e.g. gary-agents)
 
 1. `Cargo.toml`: add `renderer_glow`, `backend_gbm` to smithay features (keep
@@ -315,11 +444,16 @@ demonstrably feasible *there* — yet it is a real feature (feature flags + `Dma
 wiring + `GbmDevice` + `GlesRenderer` + format negotiation + `libgbm-dev`/`libdrm-dev`),
 not a small change, and the GPUs are already 88–92% busy. More decisively, for the
 intended *production* target (a headless, GPU-less VM) smithay 0.7.0 has **no software
-path to import dmabuf** — surfaceless EGL can't, GBM needs a render node, and there is no
-wgpu/lavapipe renderer — so this work would not actually unblock EGL clients like
-`weston-simple-egl` in a no-GPU environment. The MVP is pixman/shm and already covers the
+path to import dmabuf** — surfaceless EGL can't (no context on gary-agents), GBM needs a
+render node, there is no wgpu/lavapipe renderer, **and the "llvmpipe-over-GBM" fallback
+was specifically tested and does NOT work on vendor (NVIDIA) render nodes** (Mesa
+`eglInitialize` fails; see "Software-EGL-over-GBM fallback (llvmpipe)") — so this work
+would not actually unblock EGL clients like `weston-simple-egl` in a no-GPU environment.
+The llvmpipe-GBM fallback remains unverified (not testable here) only for a virtio-gpu /
+generic-`dri`-backend VM. The MVP is pixman/shm and already covers the
 MVP test story (see `lat.md/decisions#Renderer`). The right next step is a decision, not
 code: **do we standardize on GPU-backed deployment boxes?** If yes, execute the scoped
-plan above; if the target stays GPU-less, this stays deferred pending a smithay
-wgpu/lavapipe renderer. This skill file is the scoping artifact so the follow-up doesn't
-re-research any of the above.
+plan above (the NVIDIA hw-EGL path works and is the reliable route). If the target stays
+GPU-less / virtio-only, this stays deferred pending either verification of the
+software-GBM path on an actual virtio-gpu VM or a smithay wgpu/lavapipe renderer. This
+skill file is the scoping artifact so the follow-up doesn't re-research any of the above.
