@@ -7,7 +7,9 @@
  * JSON), and reports pass/fail. The driver does no QUIC itself.
  */
 
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, openSync, readdirSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { evaluate } from "./compare.js";
@@ -17,22 +19,27 @@ import {
   killClient,
   killStaleServer,
   launchClient,
+  sshExec,
   startServer,
   tailServerLog,
 } from "./remote.js";
 import type { DriveResult } from "./run.js";
-import { runDrive, viewerPath } from "./run.js";
+import { runDrive, runWatch, viewerPath } from "./run.js";
 
 interface Args {
   ssh: string;
   server: string;
   checkout: string;
   client: string;
+  clientExplicit: boolean;
   frames: number;
   click: { x: number; y: number } | null;
   out: string;
   skipBuild: boolean;
   expectChange: boolean;
+  watch: boolean;
+  bg: boolean;
+  stop: boolean;
   help: boolean;
 }
 
@@ -49,6 +56,9 @@ Options:
   --skip-build          Skip git pull + cargo build on the remote
   --no-expect-change    Pass without a pixel change (e.g. cursor-sprite clients)
   --expect-change <bool> Require pixel change (default: true)
+  --watch               Open a live window to watch the render (close or Ctrl+C to stop)
+  --bg                  Run in the background; print pid + log path and return
+  --stop                Tear down the remote server + clients (e.g. after --bg)
   --help, -h            Show this help`;
 
 function fail(msg: string): never {
@@ -63,11 +73,15 @@ function parseArgs(argv: string[]): Args {
     server: "",
     checkout: "~/dev/wayland-remote",
     client: "weston-clickdot",
+    clientExplicit: false,
     frames: 10,
     click: { x: 100, y: 100 },
     out: "./drive-results",
     skipBuild: false,
     expectChange: true,
+    watch: false,
+    bg: false,
+    stop: false,
     help: false,
   };
 
@@ -90,6 +104,7 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--client":
         a.client = next();
+        a.clientExplicit = true;
         break;
       case "--frames": {
         const v = next();
@@ -123,6 +138,15 @@ function parseArgs(argv: string[]): Args {
         a.expectChange = v === "true" || v === "1" || v === "yes";
         break;
       }
+      case "--watch":
+        a.watch = true;
+        break;
+      case "--bg":
+        a.bg = true;
+        break;
+      case "--stop":
+        a.stop = true;
+        break;
       case "--help":
       case "-h":
         a.help = true;
@@ -161,7 +185,45 @@ function splitAddr(server: string): { ip: string; port: number } {
 async function main() {
   const a = parseArgs(process.argv.slice(2));
   const { ip: serverIp, port } = splitAddr(a.server);
+
+  // --bg: re-spawn this script detached (without --bg), with stdout/stderr
+  // going to a tmp log file, and return immediately. The detached child runs
+  // the full flow (e.g. the indefinite --watch loop) after we exit.
+  if (a.bg) {
+    const args = process.argv.slice(2).filter((x) => x !== "--bg");
+    const logFile = path.join(os.tmpdir(), `drive-${port}-${Date.now()}.log`);
+    const fd = openSync(logFile, "a");
+    const child = spawn(process.execPath, [process.argv[1], ...args], {
+      detached: true,
+      stdio: ["ignore", fd, fd],
+    });
+    child.unref();
+    console.log(`[bg] background pid: ${child.pid}`);
+    console.log(`[bg] log file: ${logFile}`);
+    console.log(
+      `[bg] stop with: bun run src/drive.ts --ssh ${a.ssh} --server ${a.server} --stop`,
+    );
+    return;
+  }
+
+  // --stop: tear down the remote server + any weston test clients, and
+  // return. Used to stop a --bg watch (close any local viewer window too).
+  if (a.stop) {
+    await killStaleServer(a.ssh);
+    await sshExec(a.ssh, "pkill -f '[w]eston-' 2>/dev/null; true").catch(
+      () => {},
+    );
+    console.log(
+      "[stop] stopped (remote server + clients killed); close any local viewer window if still open",
+    );
+    return;
+  }
+
   const viewer = viewerPath();
+
+  // --watch with no explicit --client defaults to the animated flower client
+  // (the static weston-clickdot cursor sprite is not interesting to watch).
+  const client = a.watch && !a.clientExplicit ? "weston-flower" : a.client;
 
   try {
     if (!a.skipBuild) {
@@ -178,6 +240,24 @@ async function main() {
     const addr = `${addrIp}:${port}`;
     console.log(`[drive] server address: ${addr}`);
 
+    if (a.watch) {
+      // The headless server does not re-send already-mapped windows to a
+      // late-connecting viewer, so start the (visible) viewer first, wait for
+      // it to connect, then launch the remote client. runWatch is non-blocking;
+      // we await it last so the finally-cleanup still runs once the window
+      // closes (or the viewer is killed).
+      const watchPromise = runWatch(viewer, addr);
+      await new Promise((r) => setTimeout(r, 2000));
+      await launchClient(a.ssh, client);
+      console.log(
+        `[watch] watching — close the viewer window or press Ctrl+C to stop (client: ${client})`,
+      );
+      const code = await watchPromise;
+      console.log(`[watch] viewer exited (code ${code})`);
+      process.exitCode = code;
+      return;
+    }
+
     mkdirSync(a.out, { recursive: true });
     const outDir = path.resolve(a.out);
 
@@ -186,7 +266,7 @@ async function main() {
     // client so it maps within that window.
     const drivePromise = runDrive(viewer, addr, a.click, a.frames, outDir);
     await new Promise((r) => setTimeout(r, 1000));
-    await launchClient(a.ssh, a.client);
+    await launchClient(a.ssh, client);
 
     const run = await drivePromise;
 
@@ -226,7 +306,7 @@ async function main() {
     // Always tear down remote processes, even on error.
     console.log("\n[drive] cleanup...");
     for (const step of [
-      () => killClient(a.ssh, a.client),
+      () => killClient(a.ssh, client),
       () => killStaleServer(a.ssh),
     ]) {
       try {

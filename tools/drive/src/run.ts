@@ -6,7 +6,7 @@
  *   {"frames":N,"fps":F,"rtt_ns":N,"pixels_changed_at":{"frame":N,"ms":N}|null,"window_id":N}
  */
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -94,6 +94,45 @@ export function runDrive(
       }
 
       resolve({ result, stdout, stderr, exitCode });
+    });
+  });
+}
+
+/**
+ * Spawn `<viewer> --addr <addr> --insecure` in visible (live window) mode and
+ * wait for the user to close the window (or the process to be killed).
+ * Resolves to the viewer's exit code.
+ *
+ * SIGINT/SIGTERM received by this process are forwarded to the child so a
+ * Ctrl+C tears the window down cleanly; the handlers are removed once the
+ * child has exited so we don't leak listeners.
+ */
+export function runWatch(viewer: string, addr: string): Promise<number> {
+  const child = spawn(viewer, ["--addr", addr, "--insecure"], {
+    stdio: "inherit",
+    cwd: repoRoot,
+  });
+
+  const onSignal = (signal: NodeJS.Signals): void => {
+    child.kill(signal);
+  };
+  const cleanup = (): void => {
+    process.removeListener("SIGINT", onSignal);
+    process.removeListener("SIGTERM", onSignal);
+  };
+
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+
+  return new Promise((resolve) => {
+    child.on("close", (code) => {
+      cleanup();
+      resolve(code ?? 0);
+    });
+    child.on("error", (err) => {
+      cleanup();
+      console.error(`[watch] failed to spawn viewer: ${err.message}`);
+      resolve(1);
     });
   });
 }

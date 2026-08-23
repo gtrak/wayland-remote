@@ -38,6 +38,9 @@ it first:
     --skip-build          Skip git pull + cargo build
     --no-expect-change    Pass without a pixel change (e.g. cursor-sprite clients)
     --expect-change <bool> Require pixel change (default: true)
+    --watch               Open a live window to watch the render (close or Ctrl+C to stop)
+    --bg                  Run in the background; print pid + log path and return
+    --stop                Tear down the remote server + clients (e.g. after --bg)
 
 ## Behavior
 
@@ -63,3 +66,36 @@ the headless server does not composite cursors into streamed frames. So
 `pixels_changed_at` is always `null` for clickdot even when input works. Use
 `--no-expect-change` with it to verify the input pipeline is wired, or use a
 content-changing client (e.g. `weston-flower`).
+
+## Watch mode (live window)
+
+To watch the render live instead of running the headless capture, pass
+`--watch`. It opens a native GDI window on your screen streaming the remote
+composite in real time; close the window (or press Ctrl+C) to stop, which
+tears down the remote client + server:
+
+    bun run src/drive.ts --ssh gary-agents --server 192.168.10.31:9000 --watch [--client weston-flower]
+
+The remote client launches ~2s after the viewer connects, because the headless
+server does not re-send already-mapped windows to a late-connecting viewer.
+With `--watch` and no explicit `--client`, the default is `weston-flower` (it
+animates) rather than the static `weston-clickdot` cursor sprite.
+
+## Running in the background / stopping
+
+`--watch` runs until the window is closed, so a foreground invocation blocks
+the terminal indefinitely. Add `--bg` to run the whole invocation in the
+background: the script re-spawns itself detached (without `--bg`), prints the
+background pid + a log file path, and returns immediately. The live window
+opens and keeps running in the background:
+
+    bun run src/drive.ts --ssh gary-agents --server 192.168.10.31:9000 --watch --bg
+
+To stop a backgrounded watch (a detached child does not receive your
+terminal's Ctrl+C), run:
+
+    bun run src/drive.ts --ssh gary-agents --server 192.168.10.31:9000 --stop
+
+This tears down the remote server + any weston test clients. Close the local
+viewer window if it is still open (killing the server usually ends the stream
+too, but a local viewer may linger).
