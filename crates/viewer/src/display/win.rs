@@ -12,9 +12,9 @@ use crate::input;
 use crate::session::ViewerSession;
 use crate::window_manager::ViewerWindowManager;
 
-use windows_sys::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, ClientToScreen, DIB_RGB_COLORS, EndPaint,
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, DIB_RGB_COLORS, EndPaint,
     InvalidateRect, PAINTSTRUCT, SRCCOPY, StretchDIBits,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -22,7 +22,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateCursor, CreateWindowExW, DefWindowProcW,
     DestroyCursor, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW,
     GetWindowLongPtrW, HCURSOR, HMENU, IDC_ARROW, LoadCursorW, MSG, PostMessageW, PostQuitMessage,
-    RegisterClassW, SetCursor, SetCursorPos, ShowCursor, SWP_NOMOVE, SWP_NOZORDER,
+    RegisterClassW, SetCursor, ShowCursor, SWP_NOMOVE, SWP_NOZORDER,
     SetWindowLongPtrW, SetWindowPos, SetWindowTextW, TranslateMessage, WM_ACTIVATE, WM_CLOSE,
     WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
     WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
@@ -56,6 +56,7 @@ struct CursorShapeMsg {
 }
 
 /// Payload posted to the UI thread when the cursor position changes.
+#[allow(dead_code)]
 struct CursorMoveMsg {
     x: f64,
     y: f64,
@@ -409,48 +410,13 @@ unsafe extern "system" fn controller_proc(
             }
         }
         WM_USER_CURSOR_MOVE => {
-            let msg = unsafe { Box::from_raw(lparam as *mut CursorMoveMsg) };
-            let child = state.shared.manager.lock().unwrap().hwnd_for(wid);
-            if let Some(child) = child {
-                let child_hwnd = child as HWND;
-                let mut pt = POINT { x: 0, y: 0 };
-                unsafe {
-                    ClientToScreen(child_hwnd, &mut pt);
-                }
-                let (sx, sy) = {
-                    let child_ptr =
-                        unsafe { GetWindowLongPtrW(child_hwnd, GWLP_USERDATA) } as *mut ChildState;
-                    let (cw, ch) = if child_ptr.is_null() {
-                        (0, 0)
-                    } else {
-                        let cs = unsafe { &*child_ptr };
-                        (cs.client_w, cs.client_h)
-                    };
-                    let frame = state
-                        .shared
-                        .frames
-                        .lock()
-                        .unwrap()
-                        .get(&wid)
-                        .and_then(|s| s.latest());
-                    match (frame, (cw, ch)) {
-                        (Some(f), (cw, ch))
-                            if cw > 0 && ch > 0 && f.width > 0 && f.height > 0 =>
-                        {
-                            (
-                                cw as f64 / f.width as f64,
-                                ch as f64 / f.height as f64,
-                            )
-                        }
-                        _ => (1.0, 1.0),
-                    }
-                };
-                let screen_x = pt.x + (msg.x * sx) as i32;
-                let screen_y = pt.y + (msg.y * sy) as i32;
-                unsafe {
-                    SetCursorPos(screen_x, screen_y);
-                }
-            }
+            // Free the Box posted by the net thread. The local mouse is the
+            // source of truth for cursor position (WM_MOUSEMOVE is forwarded
+            // upstream as PointerMove), so applying the stale CursorMove echo
+            // via SetCursorPos would cause a snap-back (it lags the live
+            // mouse by one RTT) and a SetCursorPos → WM_MOUSEMOVE →
+            // PointerMove feedback loop (RTT jitter).
+            let _msg = unsafe { Box::from_raw(lparam as *mut CursorMoveMsg) };
         }
         WM_USER_CURSOR_HIDE => {
             let focused = *state.shared.focused.lock().unwrap();

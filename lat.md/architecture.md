@@ -85,7 +85,7 @@ All GDI and cursor work stays on the UI thread.
 
 The viewer renders the pointer as a native Win32 `HCURSOR` rather than compositing it into the streamed frame.
 
-On `WM_USER_CURSOR_SHAPE` the UI thread builds a 32-bit alpha cursor via `CreateCursor` (AND-mask `NULL`, XOR-mask = the BGRA sprite), destroys the previous `HCURSOR`, and calls `SetCursor`. On `WM_USER_CURSOR_MOVE` it scales the server's window-local `(x, y)` by `client_size / surface_size` (from `ChildState` and the latest frame; scale 1.0 if either is missing), adds the child's client-area screen origin (`ClientToScreen`), and calls `SetCursorPos`. On `WM_USER_CURSOR_HIDE` (only when the target window is focused) it calls `ShowCursor(0)` and tracks visibility in `Shared.cursor_visible` so the reference count stays balanced. The stored `HCURSOR` is destroyed on `WM_USER_NET_CLOSED` or `WM_CLOSE`.
+On `WM_USER_CURSOR_SHAPE` the UI thread builds a 32-bit alpha cursor via `CreateCursor` (AND-mask `NULL`, XOR-mask = the BGRA sprite), destroys the previous `HCURSOR`, and calls `SetCursor`. On `WM_USER_CURSOR_MOVE` it only frees the posted `Box<CursorMoveMsg>`; it does **not** call `SetCursorPos` because the local mouse is the source of truth (the user's `WM_MOUSEMOVE` is forwarded upstream as `PointerMove`), so applying the stale echo would cause a snap-back and a `SetCursorPos → WM_MOUSEMOVE → PointerMove` feedback loop. On `WM_USER_CURSOR_HIDE` (only when the target window is focused) it calls `ShowCursor(0)` and tracks visibility in `Shared.cursor_visible` so the reference count stays balanced. The stored `HCURSOR` is destroyed on `WM_USER_NET_CLOSED` or `WM_CLOSE`.
 
 ### GDI blit
 
