@@ -27,7 +27,7 @@ use wayland_server::backend::ClientData;
 use crate::bridge::{CompositorCommand, NetCommand, channels};
 use crate::net::cert::ServerCert;
 use crate::net::{NetSettings, run_server};
-use crate::rendering::{FrameBuffer, OffscreenRenderer, RenderRequest};
+use crate::rendering::{FrameBuffer, Offscreen, OffscreenRenderer, RenderRequest};
 use crate::state::{ClientState, Config, State};
 
 /// Returns the crate version.
@@ -65,11 +65,21 @@ pub fn run(
         shutdown.clone(),
     )?;
 
-    // Initialize the offscreen renderer after display setup.
-    state.renderer = Some(OffscreenRenderer::new(
-        state.config.width,
-        state.config.height,
-    )?);
+    // Initialize the offscreen renderer after display setup: probe for a
+    // usable EGL render node (GL renderer, can import dmabuf); fall back to
+    // the pixman software renderer (wl_shm only) when none works.
+    let setup = crate::rendering::egl::probe();
+    state.renderer = match setup {
+        Some(s) => Some(Offscreen::Gl(Box::new(OffscreenRenderer::with_renderer(
+            s.renderer,
+            state.config.width,
+            state.config.height,
+        )))),
+        None => Some(Offscreen::Software(OffscreenRenderer::new(
+            state.config.width,
+            state.config.height,
+        )?)),
+    };
 
     let socket_source = match &state.config.socket_name {
         Some(name) => ListeningSocketSource::with_name(name)?,

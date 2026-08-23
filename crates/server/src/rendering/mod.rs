@@ -1,22 +1,26 @@
-//! Offscreen rendering of client surfaces via Smithay's pixman software renderer.
+//! Offscreen rendering of client surfaces via Smithay's pixman software
+//! renderer (fallback) or GL (EGL) renderer (imports dmabuf), chosen at
+//! startup by [`egl::probe`].
 //!
-//! [`OffscreenRenderer`] imports committed wl_shm buffers as pixman textures,
-//! renders them into a single offscreen BGRA (Argb8888) buffer, and reads the
-//! pixels back as a [`FrameBuffer`]. This is the "PRD Step 2" render path: the
-//! produced bytes are exactly what the wire carries (issue 05), so GDI can blit
-//! them with zero conversion.
+//! [`OffscreenRenderer`] imports committed buffers as textures, renders them
+//! into a single offscreen BGRA (Argb8888) buffer, and reads the pixels back
+//! as a [`FrameBuffer`]. This is the "PRD Step 2" render path: the produced
+//! bytes are exactly what the wire carries (issue 05), so GDI can blit them
+//! with zero conversion.
 
 pub mod egl;
 
 use smithay::backend::allocator::Fourcc;
-use smithay::backend::renderer::pixman::{PixmanRenderer, PixmanTexture};
+use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::{
-    Bind, Color32F, ExportMem, Frame, ImportAll, Offscreen, Renderer, Texture,
+    Bind, Color32F, ExportMem, Frame, ImportAll, Offscreen as OffscreenTarget, Renderer, Texture,
 };
 use smithay::utils::{Buffer as BufferCoord, Logical, Physical, Point, Rectangle, Size, Transform};
 use smithay::wayland::compositor::{
     BufferAssignment, SubsurfaceCachedState, SurfaceAttributes, get_children, with_states,
 };
+use std::marker::PhantomData;
 use std::sync::mpsc::Sender;
 use wayland_server::protocol::wl_buffer::WlBuffer;
 use wayland_server::protocol::wl_surface::WlSurface;
@@ -86,22 +90,36 @@ pub enum RenderRequest {
     },
 }
 
-/// Renders committed client surfaces offscreen with the pixman software renderer.
-pub struct OffscreenRenderer {
-    renderer: PixmanRenderer,
+/// Renders committed client surfaces offscreen.
+///
+/// Generic over the backend renderer `R` and its offscreen target type `T`:
+/// both the pixman software renderer (`T = pixman::Image<'static, 'static>`)
+/// and the GL (EGL) renderer (`T = GlesTexture`) satisfy the same trait set
+/// (`Renderer + ImportAll + Offscreen<T> + Bind<T> + ExportMem`), so the
+/// render/readback pipeline is shared verbatim between the two.
+pub struct OffscreenRenderer<R, T> {
+    renderer: R,
     width: u32,
     height: u32,
+    /// Marker tying the renderer to its offscreen target type `T` (the
+    /// buffer `create_buffer`/`bind` operate on); never stored.
+    _target: PhantomData<T>,
 }
 
-impl OffscreenRenderer {
-    /// Create a renderer targeting a `width` x `height` offscreen framebuffer.
-    pub fn new(width: u32, height: u32) -> anyhow::Result<Self> {
-        let renderer = PixmanRenderer::new()?;
-        Ok(Self {
+impl<R, T> OffscreenRenderer<R, T>
+where
+    R: Renderer + ImportAll + OffscreenTarget<T> + Bind<T> + ExportMem,
+    R::Error: std::error::Error + Send + Sync + 'static,
+{
+    /// Wrap an already-constructed backend renderer targeting a `width` x
+    /// `height` offscreen framebuffer.
+    pub fn with_renderer(renderer: R, width: u32, height: u32) -> Self {
+        Self {
             renderer,
             width,
             height,
-        })
+            _target: PhantomData,
+        }
     }
 
     /// Render `surfaces` (each a `(buffer, x, y)` layout position) into the
@@ -113,7 +131,7 @@ impl OffscreenRenderer {
         // Import every committed buffer as a texture up front: the `Frame` holds
         // a mutable borrow of the renderer for the whole pass, so imports must
         // happen before the render pass begins.
-        let mut textures: Vec<(PixmanTexture, i32, i32)> = Vec::with_capacity(surfaces.len());
+        let mut textures: Vec<(R::TextureId, i32, i32)> = Vec::with_capacity(surfaces.len());
         for (buffer, x, y) in surfaces {
             if let Some(Ok(texture)) = self.renderer.import_buffer(buffer, None, &[]) {
                 textures.push((texture, *x, *y));
@@ -280,7 +298,7 @@ impl OffscreenRenderer {
         // Import every committed buffer as a texture up front: the `Frame`
         // holds a mutable borrow of the renderer for the whole pass, so the
         // imports must happen before the render pass begins.
-        let mut textures: Vec<(PixmanTexture, i32, i32)> = Vec::with_capacity(placed.len());
+        let mut textures: Vec<(R::TextureId, i32, i32)> = Vec::with_capacity(placed.len());
         for (surface, offset) in &placed {
             if let Some(texture) = self.committed_texture(surface) {
                 textures.push((texture, offset.x, offset.y));
@@ -290,7 +308,7 @@ impl OffscreenRenderer {
         // Import the cursor texture up front too (same borrow constraint as the
         // surface textures above): the `Frame` holds `&mut renderer` for the
         // whole pass, so its import must happen before the pass begins.
-        let cursor_tex: Option<(PixmanTexture, Point<i32, Logical>)> = cursor
+        let cursor_tex: Option<(R::TextureId, Point<i32, Logical>)> = cursor
             .and_then(|(cursor_surface, pos)| {
                 self.committed_texture(cursor_surface).map(|tex| (tex, pos))
             });
@@ -372,7 +390,7 @@ impl OffscreenRenderer {
     /// Import a surface's committed buffer as a texture, if it currently has
     /// one attached. Surfaces without a committed buffer (or with an
     /// unimportable one) are skipped and simply not drawn.
-    fn committed_texture(&mut self, surface: &WlSurface) -> Option<PixmanTexture> {
+    fn committed_texture(&mut self, surface: &WlSurface) -> Option<R::TextureId> {
         let buffer = with_states(surface, |states| {
             states
                 .cached_state
@@ -389,6 +407,69 @@ impl OffscreenRenderer {
             return None;
         };
         Some(texture)
+    }
+}
+
+impl OffscreenRenderer<PixmanRenderer, smithay::reexports::pixman::Image<'static, 'static>> {
+    /// Create a pixman software renderer targeting a `width` x `height`
+    /// offscreen framebuffer.
+    pub fn new(width: u32, height: u32) -> anyhow::Result<Self> {
+        let renderer = PixmanRenderer::new()?;
+        Ok(Self::with_renderer(renderer, width, height))
+    }
+}
+
+/// The active offscreen renderer, chosen at startup: the GL (EGL) renderer
+/// when [`egl::probe`] finds a usable DRM render node (can import dmabuf
+/// buffers), or the pixman software renderer (wl_shm only) as the fallback.
+pub enum Offscreen {
+    /// The pixman software renderer (fallback; wl_shm buffers only).
+    Software(
+        OffscreenRenderer<PixmanRenderer, smithay::reexports::pixman::Image<'static, 'static>>,
+    ),
+    /// The GL (EGL) renderer (can import dmabuf buffers). Boxed: the GL
+    /// renderer is large, and boxing keeps the software variant (the common
+    /// headless case) cheap to store in [`crate::state::State`].
+    Gl(Box<OffscreenRenderer<GlesRenderer, GlesTexture>>),
+}
+
+impl Offscreen {
+    /// Render `surfaces` (each a `(buffer, x, y)` layout position) into the
+    /// offscreen framebuffer and read the pixels back as BGRA.
+    pub fn render(&mut self, surfaces: &[(WlBuffer, i32, i32)]) -> anyhow::Result<FrameBuffer> {
+        match self {
+            Self::Software(r) => r.render(surfaces),
+            Self::Gl(r) => r.render(surfaces),
+        }
+    }
+
+    /// Render a single buffer at origin (0,0) into a `width x height` BGRA
+    /// target and read it back.
+    pub fn render_surface(
+        &mut self,
+        buffer: &WlBuffer,
+        width: u32,
+        height: u32,
+    ) -> anyhow::Result<FrameBuffer> {
+        match self {
+            Self::Software(r) => r.render_surface(buffer, width, height),
+            Self::Gl(r) => r.render_surface(buffer, width, height),
+        }
+    }
+
+    /// Render a window's full subsurface tree (root + all (sub)surfaces) into
+    /// a `width x height` BGRA target and read it back.
+    pub fn render_window_surface(
+        &mut self,
+        root: &WlSurface,
+        width: u32,
+        height: u32,
+        cursor: Option<(&WlSurface, Point<i32, Logical>)>,
+    ) -> anyhow::Result<FrameBuffer> {
+        match self {
+            Self::Software(r) => r.render_window_surface(root, width, height, cursor),
+            Self::Gl(r) => r.render_window_surface(root, width, height, cursor),
+        }
     }
 }
 

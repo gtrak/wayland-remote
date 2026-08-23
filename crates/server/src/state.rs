@@ -52,7 +52,7 @@ use wayland_server::protocol::wl_shell_surface;
 use wayland_server::protocol::wl_surface::WlSurface;
 use wayland_server::{Client, DisplayHandle, Resource, delegate_dispatch, delegate_global_dispatch};
 
-use crate::rendering::{FrameBuffer, OffscreenRenderer, RenderRequest};
+use crate::rendering::{FrameBuffer, Offscreen, RenderRequest};
 use crate::wl_shell::WlShellState;
 
 /// Configuration for the headless compositor.
@@ -260,8 +260,9 @@ pub struct State {
     pub window_manager: crate::window::WindowManager,
     /// Committed surfaces, keyed by object id, with buffer + layout position.
     pub surfaces: HashMap<ObjectId, SurfaceInfo>,
-    /// Offscreen renderer, initialized after display setup.
-    pub renderer: Option<OffscreenRenderer>,
+    /// Offscreen renderer (pixman fallback or GL/dmabuf), initialized after
+    /// display setup.
+    pub renderer: Option<Offscreen>,
     /// Test back-channel carrying render requests (None in production).
     pub render_rx: Option<Receiver<RenderRequest>>,
     pub config: Config,
