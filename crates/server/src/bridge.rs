@@ -35,6 +35,22 @@ pub enum NetCommand {
     },
     /// Window lifecycle events to relay to every viewer's control stream.
     WindowEvents(Vec<(u64, WindowEventKind)>),
+    /// The pointer cursor sprite (BGRA, top-down) to relay to every viewer's
+    /// control stream; `data` is `width * height * 4` bytes. Sent only when
+    /// the cursor image changes.
+    CursorShape {
+        window_id: u64,
+        width: u32,
+        height: u32,
+        hot_x: i32,
+        hot_y: i32,
+        data: Vec<u8>,
+    },
+    /// Move the pointer cursor to (x, y) in window-local coordinates, relayed
+    /// to every viewer's control stream.
+    CursorMove { window_id: u64, x: f64, y: f64 },
+    /// Hide the pointer cursor, relayed to every viewer's control stream.
+    CursorHide { window_id: u64 },
     /// Stop the QUIC server and drop all sessions.
     Shutdown,
 }

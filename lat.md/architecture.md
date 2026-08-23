@@ -57,7 +57,7 @@ The legacy `wl_shell` global is hand-rolled in `[[crates/server/src/wl_shell.rs]
 
 Each connection is one quinn session: a control stream plus one unidirectional stream per frame, with receiver-side skip-stale.
 
-Control traffic (handshake, input, window events, ping/pong) shares one bidirectional stream; each compressed frame gets its own stream so a lost frame cannot head-of-line-block later frames. Receivers issue STOP_SENDING on stale frame streams — UDP-like drop-oldest semantics without custom loss recovery ([[decisions#Decision Log#Transport]]).
+Control traffic (handshake, input, window events, cursor updates, ping/pong) shares one bidirectional stream; each compressed frame gets its own stream so a lost frame cannot head-of-line-block later frames. Receivers issue STOP_SENDING on stale frame streams — UDP-like drop-oldest semantics without custom loss recovery ([[decisions#Decision Log#Transport]]).
 
 ## Viewer
 

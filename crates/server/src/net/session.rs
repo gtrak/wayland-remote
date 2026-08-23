@@ -14,7 +14,7 @@ use calloop::channel;
 use quinn::{Connection, RecvStream, SendStream};
 use wayland_remote_protocol::{
     Compression, DecodeError, FORMAT_BGRA8, FRAME_HEADER_SIZE, FRAME_MAGIC, FrameHeader, Message,
-    WindowEventKind, decode_message, decode_varint, encode_message,
+    decode_message, decode_varint, encode_message,
 };
 
 use crate::bridge::{CompositorCommand, NetCommand};
@@ -182,11 +182,11 @@ pub(crate) async fn handle_connection(
         return;
     }
 
-    // Window events are small and order-sensitive: the frame sender
-    // forwards them to the control loop (which owns the control stream)
-    // as they arrive, so a coalesced frame burst cannot swallow them.
-    let (window_event_tx, mut window_event_rx) =
-        tokio::sync::mpsc::unbounded_channel::<Vec<(u64, WindowEventKind)>>();
+    // Control updates (window events and cursor updates) are small and
+    // order-sensitive: the frame sender forwards them to the control loop
+    // (which owns the control stream) as they arrive, so a coalesced frame
+    // burst cannot swallow them.
+    let (control_tx, mut control_rx) = tokio::sync::mpsc::unbounded_channel::<NetCommand>();
 
     // Frame sender: each frame on its own unidirectional stream.
     let mut frame_conn = conn.clone();
@@ -197,7 +197,7 @@ pub(crate) async fn handle_connection(
             };
             // Sender-side coalescing: absorb anything that landed while the
             // previous frame was on the wire; only the newest frame is
-            // written, but window events are forwarded immediately.
+            // written, but control updates are forwarded immediately.
             tokio::time::sleep(COALESCE_WINDOW).await;
             let mut batch = vec![cmd];
             while let Ok(cmd) = frame_rx.try_recv() {
@@ -206,8 +206,11 @@ pub(crate) async fn handle_connection(
             let mut latest: Option<NetCommand> = None;
             for cmd in batch {
                 match cmd {
-                    NetCommand::WindowEvents(events) => {
-                        let _ = window_event_tx.send(events);
+                    NetCommand::WindowEvents(_)
+                    | NetCommand::CursorShape { .. }
+                    | NetCommand::CursorMove { .. }
+                    | NetCommand::CursorHide { .. } => {
+                        let _ = control_tx.send(cmd);
                     }
                     other => latest = Some(other),
                 }
@@ -228,8 +231,8 @@ pub(crate) async fn handle_connection(
         }
     });
 
-    // Control loop: input events, window commands, window events, ping/pong,
-    // and periodic server pings.
+    // Control loop: input events, window commands, control updates (window
+    // events and cursor updates), ping/pong, and periodic server pings.
     let mut ping_timer = tokio::time::interval(PING_INTERVAL);
     ping_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -299,22 +302,73 @@ pub(crate) async fn handle_connection(
                     }
                 }
             }
-            events = window_event_rx.recv() => {
-                // The frame sender forwards window events; None means it has
-                // exited, which ends the session.
-                let Some(events) = events else {
+            cmd = control_rx.recv() => {
+                // The frame sender forwards control updates; None means it
+                // has exited, which ends the session.
+                let Some(cmd) = cmd else {
                     break;
                 };
-                for (window_id, event) in events {
-                    if write_message(
-                        &mut ctrl_send,
-                        &Message::WindowEvent { window_id, event },
-                    )
-                    .await
-                    .is_err()
-                    {
-                        break;
+                match cmd {
+                    NetCommand::WindowEvents(events) => {
+                        for (window_id, event) in events {
+                            if write_message(
+                                &mut ctrl_send,
+                                &Message::WindowEvent { window_id, event },
+                            )
+                            .await
+                            .is_err()
+                            {
+                                break;
+                            }
+                        }
                     }
+                    NetCommand::CursorShape {
+                        window_id,
+                        width,
+                        height,
+                        hot_x,
+                        hot_y,
+                        data,
+                    } => {
+                        if write_message(
+                            &mut ctrl_send,
+                            &Message::CursorShape {
+                                window_id,
+                                width,
+                                height,
+                                hot_x,
+                                hot_y,
+                                data,
+                            },
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    NetCommand::CursorMove { window_id, x, y } => {
+                        if write_message(
+                            &mut ctrl_send,
+                            &Message::CursorMove { window_id, x, y },
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    NetCommand::CursorHide { window_id } => {
+                        if write_message(&mut ctrl_send, &Message::CursorHide { window_id })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    // Frames and Shutdown are consumed by the frame sender and
+                    // are never forwarded to the control loop.
+                    _ => {}
                 }
             }
             _ = ping_timer.tick() => {

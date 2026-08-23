@@ -28,9 +28,10 @@ use wayland_remote_protocol::{
     Compression, FRAME_HEADER_SIZE, FrameHeader, Message, WindowEventKind, decode_frame_header,
     decompress, encode_message,
 };
-use wayland_remote_server::net::ERROR_VERSION_MISMATCH;
+use wayland_remote_server::bridge::{NetCommand, channels};
 use wayland_remote_server::net::cert::{ALPN_PROTOCOL, ServerCert};
 use wayland_remote_server::net::session::MessageReader;
+use wayland_remote_server::net::{ERROR_VERSION_MISMATCH, NetSettings, run_server};
 use wayland_remote_server::run;
 use wayland_remote_server::state::Config;
 
@@ -590,4 +591,122 @@ fn frame_coalescing() {
     drop(ctrl);
     drop(viewer);
     stop_server(&shutdown, handle);
+}
+
+#[test]
+fn cursor_messages_forward_to_viewer() {
+    // @lat: [[tests#Streaming#Cursor message forwarding]]
+    // Plumbing test (plan 007 04b-1): push cursor NetCommands into the net
+    // bridge and assert the matching cursor Messages reach the viewer's
+    // control stream. No compositor emit point exists yet (04b-2), so the
+    // test drives the bridge's frame channel directly against `run_server`
+    // (the net side only — no Wayland compositor or XDG_RUNTIME_DIR needed).
+    let ip: std::net::IpAddr = "127.0.0.1"
+        .parse()
+        .expect("static loopback literal is a valid IP address");
+    let listen = SocketAddr::new(ip, free_port());
+    let default = Config::default();
+    let settings = NetSettings {
+        listen,
+        compression: Compression::Lz4,
+        cert: ServerCert::generate().expect("certificate should generate"),
+        width: default.width,
+        height: default.height,
+    };
+
+    let (net_bridge, comp_bridge) = channels();
+    let frame_tx = comp_bridge.frame_tx.clone();
+
+    // Run the net side (frame pump + QUIC endpoint) on a background runtime.
+    let server = thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("server runtime should build");
+        rt.block_on(run_server(&settings, net_bridge))
+    });
+
+    let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+    let viewer = connect_viewer(&runtime, listen);
+    let mut ctrl = runtime
+        .block_on(handshake(&viewer.conn))
+        .expect("handshake should succeed");
+
+    // Push the three cursor commands through the net bridge; they must arrive
+    // on the viewer's control stream in order, as the matching Messages.
+    let data = vec![0xABu8; 2 * 2 * 4];
+    frame_tx
+        .send(NetCommand::CursorShape {
+            window_id: 1,
+            width: 2,
+            height: 2,
+            hot_x: 0,
+            hot_y: 0,
+            data: data.clone(),
+        })
+        .expect("CursorShape should send");
+    frame_tx
+        .send(NetCommand::CursorMove {
+            window_id: 1,
+            x: 3.5,
+            y: 4.5,
+        })
+        .expect("CursorMove should send");
+    frame_tx
+        .send(NetCommand::CursorHide { window_id: 1 })
+        .expect("CursorHide should send");
+
+    let got = runtime.block_on(async {
+        let mut got = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while got.len() < 3 && Instant::now() < deadline {
+            match tokio::time::timeout(Duration::from_secs(2), ctrl.next_message()).await {
+                Ok(Ok(Message::Ping { .. })) => {
+                    // Server keepalive ping; ignored by the viewer.
+                }
+                Ok(Ok(msg)) => got.push(msg),
+                Ok(Err(err)) => panic!("control stream read failed: {err}"),
+                Err(_) => {
+                    // Per-read timeout; keep waiting until the deadline.
+                }
+            }
+        }
+        got
+    });
+
+    assert_eq!(got.len(), 3, "all three cursor messages should arrive");
+    assert_eq!(
+        got[0],
+        Message::CursorShape {
+            window_id: 1,
+            width: 2,
+            height: 2,
+            hot_x: 0,
+            hot_y: 0,
+            data,
+        },
+        "CursorShape must forward the sprite and geometry"
+    );
+    assert_eq!(
+        got[1],
+        Message::CursorMove {
+            window_id: 1,
+            x: 3.5,
+            y: 4.5,
+        },
+        "CursorMove must forward the window-local position"
+    );
+    assert_eq!(
+        got[2],
+        Message::CursorHide { window_id: 1 },
+        "CursorHide must forward the target window"
+    );
+
+    // Stop the net server cleanly.
+    frame_tx
+        .send(NetCommand::Shutdown)
+        .expect("Shutdown should send");
+    drop(frame_tx);
+    drop(comp_bridge);
+    drop(ctrl);
+    drop(viewer);
+    let result = server.join().expect("server thread should not panic");
+    result.expect("net server should exit cleanly");
 }

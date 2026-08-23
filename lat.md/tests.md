@@ -96,6 +96,10 @@ Frames stream to the viewer with monotonically increasing frame ids.
 
 A streamed frame's `window_id` matches the created toplevel's id (non-zero), proving per-window rendering and wire tagging.
 
+### Cursor message forwarding
+
+Cursor NetCommands (CursorShape with a non-empty sprite, CursorMove, CursorHide) pushed into the net bridge are forwarded to the viewer's control stream as the matching `Message` cursor variants, in order.
+
 ## Viewer
 
 Viewer client tests: pure-function unit tests for the Win32-to-protocol input translation, plus a loopback QUIC session test against a streaming server.
