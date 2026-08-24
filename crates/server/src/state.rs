@@ -283,6 +283,11 @@ pub struct State {
     /// The surface set via `wl_pointer.set_cursor`, if any. Drawn on top of the
     /// focused window at render time.
     pub cursor_surface: Option<WlSurface>,
+    /// Identity of the cursor buffer last read back + sent as `CursorShape`.
+    /// A `cursor_image` call whose committed buffer matches this skips the
+    /// (synchronous) GPU readback, so a static cursor is read back once and
+    /// pure pointer moves are no-ops. Cleared on `Hidden`/`Named`.
+    cursor_sprite_buffer: Option<WlBuffer>,
     /// Tracks xdg toplevels, window ids, focus, and pending window events.
     pub window_manager: crate::window::WindowManager,
     /// Committed surfaces, keyed by object id, with buffer + layout position.
@@ -382,6 +387,7 @@ impl State {
             text_input_manager_state,
             dmabuf_state,
             cursor_surface: None,
+            cursor_sprite_buffer: None,
             window_manager: crate::window::WindowManager::new(),
             surfaces: HashMap::new(),
             renderer: None,
@@ -464,15 +470,13 @@ impl State {
             .or_else(|| self.window_manager.focused())
     }
 
-    /// Read back the current cursor sprite's pixels (BGRA) via the offscreen
-    /// renderer, returning the frame on success. Any failure (no renderer, no
-    /// committed buffer, zero size, unimportable buffer) yields `None` — a
-    /// cursor readback must never panic or drop the client connection.
-    fn readback_cursor_sprite(&mut self, cursor: &WlSurface) -> Option<FrameBuffer> {
-        // The cursor surface's committed buffer (the client attaches + commits
-        // it before `set_cursor`, so it is in `current()` by the time this
-        // handler runs). Mirrors the buffer lookup in `commit`.
-        let buffer = with_states(cursor, |states| {
+    /// The cursor surface's currently-committed buffer, or `None` if it has
+    /// none. The client attaches + commits it before `set_cursor`, so it is in
+    /// `current()` by the time `cursor_image` runs. This committed `WlBuffer`
+    /// (compared by `ObjectId`, which is unique per client connection) is the
+    /// cursor-sprite cache key: it only changes when a client sets a new image.
+    fn cursor_committed_buffer(&self, cursor: &WlSurface) -> Option<WlBuffer> {
+        with_states(cursor, |states| {
             states
                 .cached_state
                 .get::<SurfaceAttributes>()
@@ -483,15 +487,22 @@ impl State {
                     BufferAssignment::NewBuffer(buffer) => Some(buffer.clone()),
                     BufferAssignment::Removed => None,
                 })
-        })?;
+        })
+    }
+
+    /// Read back a cursor sprite buffer's pixels (BGRA) via the offscreen
+    /// renderer, returning the frame on success. Any failure (no renderer, zero
+    /// size, unimportable buffer) yields `None` — a cursor readback must never
+    /// panic or drop the client connection.
+    fn readback_cursor_sprite(&mut self, buffer: &WlBuffer) -> Option<FrameBuffer> {
         // SHM buffers expose their size via `with_buffer_contents`; dmabuf
         // buffers carry a `Dmabuf` in the data map instead (same fallback as
         // `commit`).
         let (width, height) =
-            with_buffer_contents(&buffer, |_, _, data| (data.width, data.height))
+            with_buffer_contents(buffer, |_, _, data| (data.width, data.height))
                 .ok()
                 .or_else(|| {
-                    get_dmabuf(&buffer)
+                    get_dmabuf(buffer)
                         .ok()
                         .map(|d| (d.width() as i32, d.height() as i32))
                 })?;
@@ -507,7 +518,7 @@ impl State {
         // read the pixels back (the existing single-surface readback path).
         self.renderer
             .as_mut()
-            .and_then(|renderer| renderer.render_surface(&buffer, width, height).ok())
+            .and_then(|renderer| renderer.render_surface(buffer, width, height).ok())
     }
 
     fn report_surface_count(&self) {
@@ -705,8 +716,19 @@ impl SeatHandler for State {
             // a cursor update must never panic or drop the client.
             CursorImageStatus::Surface(s) => {
                 self.cursor_surface = Some(s.clone());
+                // Cache the cursor sprite: only re-read + re-emit when the
+                // cursor surface's committed buffer changes (a client set a new
+                // cursor image). The committed `WlBuffer` is compared by
+                // `ObjectId`, so a static cursor is read back once and the
+                // (synchronous) GPU readback is skipped on the `cursor_image`
+                // calls fired by pure pointer moves.
+                let buffer = self.cursor_committed_buffer(&s);
+                if buffer.as_ref() == self.cursor_sprite_buffer.as_ref() {
+                    return;
+                }
                 if let Some(window_id) = self.cursor_window_id()
-                    && let Some(frame) = self.readback_cursor_sprite(&s)
+                    && let Some(buffer) = buffer.as_ref()
+                    && let Some(frame) = self.readback_cursor_sprite(buffer)
                     && let Some(tx) = &self.net_cmd_tx
                 {
                     // The hotspot is on the cursor surface's data map (written by
@@ -726,12 +748,15 @@ impl SeatHandler for State {
                         hot_y: hotspot.y,
                         data: frame.data,
                     });
+                    self.cursor_sprite_buffer = Some(buffer.clone());
                 }
             }
             // No cursor theme in the headless MVP: `Hidden`/`Named` clear the
-            // in-frame cursor and tell viewers to hide theirs.
+            // in-frame cursor, reset the sprite cache so a later `Surface`
+            // cursor re-reads, and tell viewers to hide theirs.
             CursorImageStatus::Hidden | CursorImageStatus::Named(_) => {
                 self.cursor_surface = None;
+                self.cursor_sprite_buffer = None;
                 if let Some(window_id) = self.cursor_window_id()
                     && let Some(tx) = &self.net_cmd_tx
                 {
